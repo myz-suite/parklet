@@ -1,68 +1,225 @@
 # ParkingLot
 
-面向 AI Agent 的浏览器控制基础设施。Agent 通过 CLI（或 HTTP）向 `parkinglot-server` 发命令，server 经 WebSocket 转发到 `parkinglot-extension`（Chrome Manifest V3 扩展），由扩展在真实浏览器中执行 —— 打开网页、点击、输入、滚动、提取内容、截图、搜索、页面内网络请求。
+面向 AI Agent 的浏览器控制基础设施。Agent 通过 `pl` CLI（或 HTTP）向 `parkinglot-server` 发送命令，server 经 WebSocket 转发到 `parkinglot-extension`（Chrome Manifest V3 扩展），由扩展在你自己的真实浏览器中执行——打开页面、点击、输入、滚动、提取内容、截图、搜索、带登录态的页面内请求。
 
 ```
 ┌────────────┐   pl goto https://x   ┌───────────────────┐   WebSocket    ┌─────────────────────┐
 │   Agent    │ ────────────────────▶ │  parkinglot-server │ ─────────────▶ │  parkinglot-extension │
-│  (LLM)     │ ◀──────────────────── │  (relay 守护进程)   │ ◀───────────── │   (Chrome MV3)       │
+│  (LLM)     │ ◀──────────────────── │   (relay 守护进程)  │ ◀───────────── │   (Chrome MV3)       │
 └────────────┘   result + context    └───────────────────┘    token 配对   └──────────┬──────────┘
-                                                                           真实浏览器页面
+                                                                             真实浏览器页面
 ```
+
+## 特性
+
+- **24 个命令**：导航（goto/back/forward/reload）、交互（click/click-text/fill/type/press/hover/select）、视图（scroll/screenshot）、提取（extract/page-info）、页面内网络（fetch/search）、标签页管理、等待、会话查询。
+- **真实登录态**：一切在你自己的浏览器会话中执行（cookie、登录、反爬环境），`fetch` 可携带登录态。
+- **连续性模型**：session / tab / navId + 每个响应的 `context` 快照，Agent 始终能自证页面是否已变化。
+- **Human-in-the-loop**：session 可切 `ask` 模式，写操作需经扩展 popup（或 `pl approve`）批准。
+- **可审计**：命令账本（JSON lines）实时记录，敏感字段自动脱敏（`pl logs`）。
+- **安全默认**：server 仅绑 `127.0.0.1` + token 配对；`eval` 默认禁用。
 
 ## 仓库结构（pnpm workspace）
 
-| 包                                             | 说明                                                                   |
-| ---------------------------------------------- | ---------------------------------------------------------------------- |
-| `packages/protocol` (`@parkinglot/protocol`)   | 共享协议：消息信封、命令全集、公共类型、Zod 校验                       |
-| `packages/server` (`@parkinglot/server`)       | relay 守护进程：WebSocket 服务端、CLI、会话注册、HITL、命令账本        |
-| `packages/extension` (`@parkinglot/extension`) | Chrome MV3 扩展：WebSocket 客户端、content script 执行器、popup 控制台 |
+| 包                                             | 说明                                                                     |
+| ---------------------------------------------- | ------------------------------------------------------------------------ |
+| `packages/protocol` (`@parkinglot/protocol`)   | 共享协议：消息信封、命令全集、公共类型、Zod 校验                         |
+| `packages/server` (`@parkinglot/server`)       | relay 守护进程：WebSocket 服务端、`pl` CLI、session 注册、HITL、命令账本 |
+| `packages/extension` (`@parkinglot/extension`) | Chrome MV3 扩展：WebSocket 客户端、content script 执行器、popup 控制台   |
 
 ## 前置条件
 
-- Node.js ≥ 20（本仓库使用 pnpm workspace）
-- pnpm ≥ 9
-- Chrome / Chromium（运行扩展）
+- Node.js ≥ 20、pnpm ≥ 9（用 `pnpm --filter @parkinglot/server start` 启动 server）
+- Chrome / Chromium ≥ 137（运行扩展；137+ 需用开发者模式加载，见下）
 
-## 快速开始
+## 完整使用指南
 
-```bash
-pnpm install
-pnpm typecheck
-pnpm test
-```
-
-### 端到端使用
+### 第 1 步：构建并启动 server
 
 ```bash
-# 1. 启动 relay（打印 pair token）
+pnpm install          # 安装依赖
+pnpm build            # 编译三个包 → packages/*/dist
+
+# 启动 relay（阻塞前台；另开终端做后续操作）
 pnpm --filter @parkinglot/server start
-# → parkinglot-server listening on http://127.0.0.1:8787
-# → pair token: <hex>
-
-# 2. 构建并加载扩展
-pnpm build                     # 产出 packages/extension/dist/
-# Chrome → chrome://extensions → 开发者模式 → 加载已解压的扩展程序 → packages/extension/dist
-# 打开扩展 popup，填入 server URL 与 token，Save & Connect（状态灯变绿）
-
-# 3. 用 CLI 控制浏览器
-pl status                      # extension: connected ✅
-pl goto https://example.com    # 自动创建 session；响应带 context 快照
-pl extract                     # 提取页面可读文本
-pl click-text "Sign in"        # 按可见文本点击
-pl scroll down
-pl screenshot --path shot.png
-pl search "parkinglot"         # 搜索引擎结果
-pl fetch https://api.example.com/me --header "Accept: application/json"
-pl logs --follow               # 命令账本（敏感字段脱敏）
 ```
 
-Agent 调用指南见 `parkinglot` skill（`.agents/skills/parkinglot/`）。
+启动输出类似：
+
+```
+parkinglot-server listening on http://127.0.0.1:8787
+extension websocket: ws://127.0.0.1:8787/ws
+pair token: e59fd1316be7aa2fb839fd016fbe1b0b589ce08ee6af2db3
+```
+
+记下 **pair token**。token 持久化在 state 目录（默认 `~/.parkinglot/token`），重启 server 不变，Chrome 侧配对一次即可。
+
+### 第 2 步：在 Chrome 中加载扩展
+
+> Chrome 137+ 已移除 `--load-extension` 命令行参数，必须用开发者模式手动加载。
+
+1. 打开 `chrome://extensions`；
+2. 打开右上角 **开发者模式**；
+3. 点 **加载已解压的扩展程序**，选择 `packages/extension/dist`；
+4. 列表中出现 **ParkingLot**。
+
+### 第 3 步：配对（一次性）
+
+1. 点击工具栏拼图图标 → ParkingLot（可固定到工具栏）；
+2. 填入 **Server URL** `http://127.0.0.1:8787` 与 **pair token**；
+3. 点 **Save & Connect**；按钮变为 **Connected ✓**、状态灯变绿即成功。
+
+配对信息保存在扩展的 `chrome.storage`，Chrome 重启后扩展会自动重连，无需重复操作。
+
+### 第 4 步：验证连接
+
+```bash
+pl status
+# extension: connected ✅
+# sessions: 0
+```
+
+> `pl` 是 `packages/server/dist/cli.js`。仓库内可直接 `node packages/server/dist/cli.js status`，或 `pnpm --filter @parkinglot/server exec` 链接后的全局 `pl` 命令。
+
+### 第 5 步：控制浏览器
+
+```bash
+pl goto https://example.com    # 首次自动创建 session；响应带 context 快照
+pl extract                     # 页面可读文本
+pl page-info                   # url/标题/视口/滚动位置
+pl click-text "Learn more"     # 按可见文本点击（真实点击 → 页面导航）
+pl scroll down                 # 滚动
+pl screenshot --path shot.png  # 截图写入文件
+pl search "parkinglot"         # 搜索结果（默认 DuckDuckGo；加 --engine google 用 Google）
+pl fetch https://api.github.com/zen --header "Accept: application/json"
+pl logs --tail 20              # 命令账本
+```
+
+## CLI 命令参考
+
+全局选项：`--server <url>`（默认 `http://127.0.0.1:8787`）、`--json`（结构化输出）、`--timeout <ms>`（默认 30000）、`--session <id>`、`--path <file>`（screenshot 落盘）。
+
+| 命令                                                     | 说明                           |
+| -------------------------------------------------------- | ------------------------------ |
+| `pl status` / `pl ping`                                  | 扩展在线？server/协议版本      |
+| `pl goto <url>`                                          | 导航（无 session 自动创建）    |
+| `pl back` / `forward` / `reload`                         | 历史导航                       |
+| `pl click <css>` / `pl click-text <text>`                | 点击元素 / 按文本点击          |
+| `pl fill <css> <value>`                                  | 填充输入框（整体替换）         |
+| `pl type <css> <text>`                                   | 逐键输入                       |
+| `pl press <key> [--selector <css>]`                      | 按键                           |
+| `pl hover <css>`                                         | 悬停                           |
+| `pl select <css> --value <v>`（或 `--label <l>`）        | 选择下拉项                     |
+| `pl scroll <up\|down\|top\|bottom\|amount>`              | 滚动                           |
+| `pl screenshot [--path x.png] [--format png\|jpeg]`      | 截图（`--full` 为实验性）      |
+| `pl extract [--limit N]`                                 | 页面可读文本（LLM 友好裁剪）   |
+| `pl page-info`                                           | 页面 url/标题/视口/滚动        |
+| `pl fetch <url> [--method] [--header "k: v"]… [--body]`  | 页面上下文网络请求（带登录态） |
+| `pl search <query> [--engine duckduckgo\|google]`        | 搜索引擎结果列表               |
+| `pl tabs`                                                | 列出标签页                     |
+| `pl tab <id>` / `pl tab-new <url>` / `pl tab-close [id]` | 切换 / 新建 / 关闭标签页       |
+| `pl wait [--ms N \| --selector css \| --condition load]` | 等待                           |
+| `pl session list\|new\|use\|close\|mode`                 | session 管理                   |
+| `pl logs [--tail N] [--follow]`                          | 命令账本                       |
+| `pl approve <requestId>` / `pl deny <requestId>`         | 远程批准 / 拒绝 HITL 请求      |
+
+退出码：`0` 成功 · `2` 参数错误 · `3` 目标/会话错误 · `4` 扩展离线 · `5` 审批未决/被拒 · `6` 超时 · `1` 其他。
+
+## 连续性模型（session / tab / navId）
+
+- **Session** 是逻辑目标。首次 `pl goto` 自动创建并成为默认，后续命令默认作用于它；用 `pl session` 管理。
+- **tabId** 是物理标签页；**navId** 每次导航递增。
+- 每个响应都带 `context {url, title, navId, tabId}` 快照——**`context` 变了就是页面变了**（url/title 变化 = 跳转；navId 递增 = 发生了导航）。Agent 应先读响应里的 context，再决定是否依赖之前提取的内容。
+
+```bash
+pl goto https://example.com    # session=pl-xxx, navId=1
+pl extract                     # 同一 session，navId 不变
+pl click-text "Learn more"     # 页面导航到 iana.org → navId=2, url 变化 ← 立刻感知
+```
+
+## Human-in-the-loop
+
+```bash
+pl session mode <id> --mode ask   # 该 session 进入 ask 模式（默认 auto）
+pl click-text "Delete"            # 写操作挂起，等待批准
+# 方式 A：扩展 popup 的批准队列点 ✔/✖
+# 方式 B：pl approve <requestId> / pl deny <requestId>（requestId 来自 pl status --json 或 /api/status）
+```
+
+- 只读命令（extract/tabs/page-info…）永不挂起。
+- 拒绝/超时（60s）默认不执行（fail-closed）。
+- 会话恢复 `pl session mode <id> --mode auto`。
+
+## 配置（server 环境变量）
+
+| 变量                           | 默认                                     | 说明                        |
+| ------------------------------ | ---------------------------------------- | --------------------------- |
+| `PARKINGLOT_PORT`              | 8787                                     | 监听端口                    |
+| `PARKINGLOT_BIND`              | 127.0.0.1                                | 仅回环（勿改 0.0.0.0）      |
+| `PARKINGLOT_TOKEN`             | 自动生成（持久化 `~/.parkinglot/token`） | 扩展配对 token              |
+| `PARKINGLOT_ALLOWED_HOSTS`     | 空（全部）                               | 域名白名单（逗号分隔）      |
+| `PARKINGLOT_DISABLED_COMMANDS` | `eval`                                   | 禁用命令列表                |
+| `PARKINGLOT_ENABLE_EVAL`       | `0`                                      | 显式开启 eval               |
+| `PARKINGLOT_STATE_DIR`         | `~/.parkinglot`                          | state / ledger / token 目录 |
+
+## 常见工作流
+
+```bash
+# 查资料
+pl search "playwright vs puppeteer"
+pl goto https://github.com/...        # 从结果挑一个
+pl extract --limit 3000
+pl scroll down && pl extract --limit 3000
+
+# 填表
+pl goto https://example.com/login
+pl fill "#username" alice
+pl fill "#password" "***"
+pl click-text "Sign in"
+pl wait --condition load && pl extract
+
+# 带登录态的 API 请求（在已登录站点页面执行）
+pl fetch https://api.github.com/user --header "Accept: application/json"
+```
+
+## 故障排查
+
+| 现象                                    | 处理                                                                                    |
+| --------------------------------------- | --------------------------------------------------------------------------------------- |
+| `EXTENSION_OFFLINE`                     | 扩展未配对/掉线：打开 popup 确认 **Connected ✓**；server 是否在跑、token 是否一致       |
+| popup 点保存无反应                      | 扩展需重新加载：chrome://extensions → ParkingLot → 刷新按钮（每次 `pnpm build` 后都要） |
+| `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS` | 先 `pl extract` 看页面实际内容；改用更具体的 CSS selector                               |
+| `SESSION_NOT_FOUND` / `No tab with id`  | session 指向的标签页被关闭：`pl session close <id>` 后重新 `pl goto`                    |
+| `TIMEOUT`                               | 页面慢：`--timeout 60000` 重试                                                          |
+| 命令作用到 Chrome 内部页报错            | content script 无法注入 `chrome://` / Web Store 页——先在普通网页上操作                  |
+| `search` 结果为空                       | 搜索引擎反爬/验证码：换 `--engine duckduckgo` 或用 `pl goto` 直接访问                   |
+
+## 安全须知
+
+- server 只绑 `127.0.0.1`；扩展连接需 token。token 是密钥，勿外泄。
+- 扩展需要 `host_permissions <all_urls>`——这是"能控制任意页面"的固有代价；请只在你信任的机器/环境使用。
+- `eval` 默认禁用（`EVAL_DISABLED`），需 server 显式开启。
+- 命令账本自动脱敏敏感字段（password/token/headers/body…），`pl logs` 可见。
+
+## 开发
+
+```bash
+pnpm install          # 安装依赖
+pnpm typecheck        # tsc --noEmit（三包）
+pnpm test             # vitest（102 个用例）
+pnpm build            # 编译 dist（server/protocol）+ esbuild 打包扩展
+pnpm lint / pnpm format
+```
+
+代码约定：TypeScript strict + ESM、vitest 测试与源码同目录（`src/*.test.ts`）、Conventional Commits。详见 `AGENTS.md`。
 
 ## 文档
 
-- `docs/initial-plan.md` — 初始设计与实施计划（架构、协议、命令集、安全模型、HITL、验收标准）
-- 协议命令参考见 `skills/parkinglot/references/protocol.md`
+- `README.md`（本文件）— 使用说明
+- `docs/initial-plan.md` — 初始设计与实施计划（架构、协议、安全模型、验收标准）
+- `docs/protocol.md` — 协议参考（指向 `skills/parkinglot/references/protocol.md`，中文版 `protocol.zh.md`）
+- `skills/parkinglot/` — `parkinglot` skill（Agent 调用指南）及其 `references/protocol.md`
+- `docs/release-plan.md` — Chrome Web Store 发布准备清单
 
 ## 许可证
 
