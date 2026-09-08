@@ -1,6 +1,6 @@
 # ParkingLot — 初始设计与实施计划
 
-> **状态**：草案（等待批准后进入实施）
+> **状态**：已实施（Phase 1–5 完成，真实 Chrome 152 端到端验证通过；本文件已与实现同步，命令命名/事件/默认引擎以 `skills/parkinglot/references/protocol.md` 为准）
 > **项目**：ParkingLot — 面向 AI Agent 的浏览器控制基础设施
 > **组件**：`parkinglot-server`（relay 守护进程）、`parkinglot-extension`（Chrome MV3 扩展）、`@parkinglot/protocol`（共享协议包）、`parkinglot` skill（Agent 使用指南）
 
@@ -116,43 +116,47 @@ session 关闭或 tab 关闭 → 从 registry 移除；下次命令自动兜底�
 
 ### 2.4 命令全集（v1）
 
-| 分类       | 命令                        | 参数（要点）                                                         | 返回                                                                         | 写操作                                                              |
-| ---------- | --------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 导航       | `goto`                      | `url`（限 http/https）、`waitUntil`（`load`/`domcontentloaded`）     | `context`                                                                    | ✔                                                                   |
-|            | `back` / `forward`          | —                                                                    | `context`                                                                    | ✔                                                                   |
-|            | `reload`                    | —                                                                    | `context`                                                                    | ✔                                                                   |
-| 交互       | `click`                     | `selector`（CSS）                                                    | `ElementInfo`                                                                | ✔                                                                   |
-|            | `click-text`                | `text`（可见文本，模糊匹配 + 去重）                                  | `ElementInfo`                                                                | ✔                                                                   |
-|            | `fill`                      | `selector`, `value`                                                  | `ElementInfo`                                                                | ✔                                                                   |
-|            | `type`                      | `selector`, `text`（逐键）                                           | `ElementInfo`                                                                | ✔                                                                   |
-|            | `press`                     | `selector`?, `key`（`Enter`/`Tab`/…）                                | `ElementInfo`                                                                | ✔                                                                   |
-|            | `hover`                     | `selector`                                                           | `ElementInfo`                                                                | ✔                                                                   |
-|            | `select`                    | `selector`, `value`/`label`                                          | `ElementInfo`                                                                | ✔                                                                   |
-| 滚动/视图  | `scroll`                    | `direction`（`up`/`down`/`top`/`bottom`）或 `selector` 或 `amount`   | 滚动后视口摘要                                                               | ✔                                                                   |
-|            | `screenshot`                | `format`（png/jpeg）、`fullPage`、`path?`                            | base64 或文件路径                                                            | 否                                                                  |
-| 提取       | `extract` (alias `content`) | `mode`（`text`/`structured`）                                        | `PageSnapshot`（可见文本、标题、URL、视口尺寸），文本含 LLM 友好的上下文裁剪 | 否                                                                  |
-|            | `getPageInfo`               | —                                                                    | url/title/视口/滚动位置                                                      | 否                                                                  |
-| 页面内网络 | `fetch`                     | `url`、`method`、`headers`、`body`、`returnType`（text/json/binary） | 状态码、头、体（有大小上限）                                                 | 视方法                                                              |
-|            | `search`                    | `query`、`engine`（默认 Google，可配）                               | 结果页快照（标题/URL/摘要列表）                                              | 否                                                                  |
-| 标签页     | `listTabs`                  | —                                                                    | `TabInfo[]`（id/title/url/active）                                           | 否                                                                  |
-|            | `createTab`                 | `url`                                                                | `TabInfo`                                                                    | ✔                                                                   |
-|            | `closeTab`                  | `tabId?`                                                             | —                                                                            | ✔                                                                   |
-|            | `activateTab`               | `tabId`                                                              | `TabInfo` + `context`                                                        | ✔                                                                   |
-| 等待       | `wait`                      | `ms` 或 `selector`（等到可见）或 `condition`（`networkidle`/`load`） | `context`                                                                    | 否                                                                  |
-| 会话       | `ping`                      | —                                                                    | `{ pong, version, extensionConnected }`                                      | 否                                                                  |
-|            | `getStatus`                 | —                                                                    | 扩展在线、session 列表、配置摘要                                             | 否                                                                  |
-| 高级       | `eval`                      | `expression`                                                         | 序列化结果                                                                   | **默认禁用**，需 `PARKINGLOT_ENABLE_EVAL=1` + session `mode: trust` |
+| 分类       | 命令               | 参数（要点）                                                         | 返回                                            | 写操作                                                              |
+| ---------- | ------------------ | -------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------- |
+| 导航       | `goto`             | `url`（限 http/https）、`waitUntil`（`load`/`domcontentloaded`）     | `context`                                       | ✔                                                                   |
+|            | `back` / `forward` | —                                                                    | `context`                                       | ✔                                                                   |
+|            | `reload`           | —                                                                    | `context`                                       | ✔                                                                   |
+| 交互       | `click`            | `selector`（CSS）                                                    | `ElementInfo`                                   | ✔                                                                   |
+|            | `click-text`       | `text`（可见文本，模糊匹配 + 去重）                                  | `ElementInfo`                                   | ✔                                                                   |
+|            | `fill`             | `selector`, `value`                                                  | `ElementInfo`                                   | ✔                                                                   |
+|            | `type`             | `selector`, `text`（逐键）                                           | `ElementInfo`                                   | ✔                                                                   |
+|            | `press`            | `selector`?, `key`（`Enter`/`Tab`/…）                                | `ElementInfo`                                   | ✔                                                                   |
+|            | `hover`            | `selector`                                                           | `ElementInfo`                                   | ✔                                                                   |
+|            | `select`           | `selector`, `value`/`label`                                          | `ElementInfo`                                   | ✔                                                                   |
+| 滚动/视图  | `scroll`           | `direction`（`up`/`down`/`top`/`bottom`）或 `selector` 或 `amount`   | 滚动后视口摘要                                  | ✔                                                                   |
+|            | `screenshot`       | `format`（png/jpeg）、`fullPage`（实验，v1 仅 viewport）、`path?`    | base64（CLI `--path` 写文件）                   | 否                                                                  |
+| 提取       | `extract`          | `mode`（`text`/`structured`）、`limit?`（字符裁剪）                  | `PageSnapshot`（可见文本、标题、URL、视口尺寸） | 否                                                                  |
+|            | `get-page-info`    | —                                                                    | url/title/视口/滚动位置                         | 否                                                                  |
+| 页面内网络 | `fetch`            | `url`、`method`、`headers`、`body`、`returnType`（text/json/binary） | 状态码、头、体（有大小上限）                    | 视方法                                                              |
+|            | `search`           | `query`、`engine`（默认 DDG html，`google` 可选）                    | 结果列表（标题/URL/摘要）                       | 否                                                                  |
+| 标签页     | `list-tabs`        | —                                                                    | `TabInfo[]`（id/title/url/active）              | 否                                                                  |
+|            | `create-tab`       | `url`                                                                | `TabInfo`                                       | ✔                                                                   |
+|            | `close-tab`        | `tabId?`                                                             | —                                               | ✔                                                                   |
+|            | `activate-tab`     | `tabId`                                                              | `TabInfo` + `context`                           | ✔                                                                   |
+| 等待       | `wait`             | `ms` 或 `selector`（等到可见）或 `condition`（`networkidle`/`load`） | `context`                                       | 否                                                                  |
+| 会话       | `ping`             | —                                                                    | `{ pong, version, extensionConnected }`         | 否                                                                  |
+|            | `get-status`       | —                                                                    | 扩展在线、session 列表、配置摘要                | 否                                                                  |
+| 高级       | `eval`             | `expression`                                                         | 序列化结果                                      | **默认禁用**，需 `PARKINGLOT_ENABLE_EVAL=1` + session `mode: trust` |
 
 > 定位器统一约定：CSS selector 作用于文档；`click-text` 走文本定位（可见性过滤 + 取唯一最优点）。后续可扩展 Playwright 风格 `locator` 字符串（`css=`/`text=`/`role=` 前缀）。
 
 ### 2.5 事件（v1 最小集 + 扩展点）
 
-| 事件                                             | 触发             | 用途                           |
-| ------------------------------------------------ | ---------------- | ------------------------------ |
-| `extension.connected` / `extension.disconnected` | 扩展 WS 状态变化 | 日志、status                   |
-| `page.navigated`                                 | 导航完成         | 审计、（未来）推送给长驻 Agent |
-| `approval.requested` / `approval.responded`      | HITL 状态变化    | popup 批准队列                 |
-| `Network.*`（扩展点，v1 不实现）                 | 页面级网络请求   | 未来流量监控/请求拦截          |
+方向：除 `approval.respond`（扩展 → server 控制）外均为扩展 → server 的上报/审计事件。
+
+| 事件                                             | 触发             | 用途                                            |
+| ------------------------------------------------ | ---------------- | ----------------------------------------------- |
+| `extension.connected` / `extension.disconnected` | 扩展 WS 状态变化 | 日志、status                                    |
+| `extension.tab-activated`                        | 激活标签页变化   | server 维护最近活跃 tab（兜底寻址）             |
+| `page.navigated`                                 | 主框架导航完成   | navId 递增、审计                                |
+| `approval.requested` / `approval.responded`      | HITL 状态变化    | popup 批准队列（requested 到扩展）              |
+| `approval.respond`（扩展 → server）              | popup 批准/拒绝  | 回写 ApprovalManager（HTTP approve 的替代通道） |
+| `Network.*`（扩展点，v1 不实现）                 | 页面级网络请求   | 未来流量监控/请求拦截                           |
 
 ### 2.6 错误码
 
@@ -245,26 +249,26 @@ interface Session {
 
 ### 3.4 CLI（`pl`）
 
-全局选项：`--server <url>`（默认 `ws://127.0.0.1:8787`）、`--json`、`--timeout <ms>`、`--session <id>`。
+全局选项：`--server <url>`（默认 `http://127.0.0.1:8787`，CLI 走 HTTP 通道）、`--json`、`--timeout <ms>`、`--session <id>`、`--path <file>`（screenshot 写盘）。
 
-| 命令                                                            | 说明                                          | 默认输出                  |
-| --------------------------------------------------------------- | --------------------------------------------- | ------------------------- |
-| `pl status` / `pl ping`                                         | 扩展在线？server 版本                         | text 摘要                 |
-| `pl goto <url>`                                                 | 导航（无 session 自动创建）                   | context 快照              |
-| `pl back / forward / reload`                                    | 历史导航                                      | context                   |
-| `pl click <selector>` / `pl click-text <text>`                  | 点击                                          | ElementInfo               |
-| `pl fill <selector> <value>` / `pl type <sel> <text>`           | 输入                                          | ElementInfo               |
-| `pl press <key>` / `pl hover <sel>` / `pl select <sel> <value>` | 交互                                          | ElementInfo               |
-| `pl scroll [up                                                  | down                                          | top                       | bottom  | amount]` | 滚动 | 视口摘要 |
-| `pl screenshot [--path x.png] [--full]`                         | 截图（默认 base64 输出长度摘要 + 可选写文件） | 摘要                      |
-| `pl extract` / `pl content`                                     | 页面可读文本                                  | 文本（可 `--limit` 裁剪） |
-| `pl fetch <url> [...curl 风格选项]`                             | 页面上下文网络请求                            | 状态码 + 体摘要           |
-| `pl search <query>`                                             | 搜索引擎结果                                  | 结果列表                  |
-| `pl tabs` / `pl tab <id>`                                       | 标签页列表 / 切换                             | 列表 / context            |
-| `pl waitt`…`pl wait [ms                                         | selector]`                                    | 等待                      | context |
-| `pl session list/new/use/close`                                 | session 管理                                  | 列表/摘要                 |
-| `pl logs [--follow] [--since]`                                  | 命令账本                                      | JSON lines                |
-| `pl approve <id>` / `pl deny <id>`                              | HITL 远程批准（也可在 popup 操作）            | 状态                      |
+| 命令                                                                 | 说明                                          | 默认输出           |
+| -------------------------------------------------------------------- | --------------------------------------------- | ------------------ |
+| `pl status` / `pl ping`                                              | 扩展在线？server 版本                         | text 摘要          |
+| `pl goto <url>`                                                      | 导航（无 session 自动创建）                   | context 快照       |
+| `pl back / forward / reload`                                         | 历史导航                                      | context            |
+| `pl click <selector>` / `pl click-text <text>`                       | 点击                                          | ElementInfo        |
+| `pl fill <selector> <value>` / `pl type <sel> <text>`                | 输入                                          | ElementInfo        |
+| `pl press <key>` / `pl hover <sel>` / `pl select <sel> <value>`      | 交互                                          | ElementInfo        |
+| `pl scroll [up                                                       | down                                          | top                | bottom                 | amount]` | 滚动 | 视口摘要 |
+| `pl screenshot [--path x.png] [--full]`                              | 截图（默认 base64 输出长度摘要 + 可选写文件） | 摘要               |
+| `pl extract` / `pl page-info`                                        | 页面可读文本（`--limit` 裁剪）/ 页面信息      | 文本 / 摘要        |
+| `pl fetch <url> [...curl 风格选项]`                                  | 页面上下文网络请求                            | 状态码 + 体摘要    |
+| `pl search <query>`                                                  | 搜索引擎结果                                  | 结果列表           |
+| `pl tabs` / `pl tab <id>` / `pl tab-new <url>` / `pl tab-close [id]` | 标签页列表 / 切换 / 新建 / 关闭               | 列表 / context     |
+| `pl wait [--ms N                                                     | --selector css                                | --condition load]` | 等待时间/元素/加载条件 | context  |
+| `pl session list/new/use/close/mode`                                 | session 管理（mode: auto/ask）                | 列表/摘要          |
+| `pl logs [--follow] [--since]`                                       | 命令账本                                      | JSON lines         |
+| `pl approve <id>` / `pl deny <id>`                                   | HITL 远程批准（也可在 popup 操作）            | 状态               |
 
 - 默认 markdown 输出（便于 Agent 阅读）；`--json` 输出结构化结果（含 `context`）便于程序消费。
 - 每个命令退出码：0 成功；2 参数错误；3 目标/会话错误；4 扩展离线；5 审批未决/被拒；1 其他。
@@ -279,6 +283,8 @@ interface Session {
 
 HTTP 每次请求用独立随机 id；无鉴权（仅回环），文档注明风险。
 
+> 另有 `POST /api/session`（session 管理：`{ action: new/use/close/mode, id?, mode? }`），供 CLI 会话子命令使用。
+
 ### 3.6 Human-in-the-loop（HITL）
 
 状态机（每 session 独立）：
@@ -291,9 +297,9 @@ HTTP 每次请求用独立随机 id；无鉴权（仅回环），文档注明风
                            └── 只读命令永不挂起（extract/tabs/context 直接执行）
 ```
 
-- 写操作集合 = 2.4 表中标记 ✔ 的命令。
-- 批准渠道：extension popup 批准队列（首选）或 `POST /api/approve/:id`（远程）。
-- pending 期间请求方收到 `PENDING_APPROVAL`（含 `requestId`），可轮询 `status` 或等事件。
+- 写操作集合 = 2.4 表中标记 ✔ 的命令（`fetch` 为 conditional：视 HTTP method）。
+- 批准渠道：extension popup 批准队列（`approval.respond` 事件）或 `POST /api/approve/:id`（远程）。
+- 挂起语义：命令在 server 侧 `await` 审批结果（HTTP/CLI 保持连接）；批准后继续执行，拒绝/超时返回 `APPROVAL_DENIED` / `APPROVAL_TIMEOUT`。
 
 ### 3.7 命令账本（流量监控）
 
@@ -322,20 +328,20 @@ HTTP 每次请求用独立随机 id；无鉴权（仅回环），文档注明风
 
 ```
 packages/extension/
-  manifest.json          # MV3，权限最小化
+  manifest.json          # MV3，权限最小化（tabs/scripting/webNavigation/storage/alarms）
+  build.config.mjs       # esbuild 构建 → dist/（background/content/popup 三入口）
+  popup.html / popup.css # popup 视图
   src/
-    background.ts        # service worker：WS 客户端 + 路由
-    content.ts           # 注入各页的执行器
-    popup.ts / popup.html / popup.css
-    dom/locator.ts       # CSS + text 定位器解析
-    dom/actions.ts       # 交互/提取/截图/滚动实现
+    background.ts        # service worker：WS 客户端 + 命令路由 + navId 追踪 + popup 消息 + alarms 保活
+    content.ts           # content script 入口（消息监听 → dom/actions）
+    popup.ts             # popup 逻辑（配置/状态/HITL 批准队列）
+    shared/messages.ts   # SW↔content / SW↔popup 内部消息类型
+    dom/locator.ts       # CSS + text 定位器（可见性过滤/最深层优先）
+    dom/actions.ts       # 交互/提取/滚动/页面内 fetch/搜索解析 实现
     dom/snapshot.ts      # PageSnapshot/可见文本提取
-    tabs.ts              # tab 管理命令
-    navTracker.ts        # navId 追踪（chrome.webNavigation）
-    protocol.ts          # 复用 @parkinglot/protocol
-  build.config.mjs       # esbuild 构建 → dist/
-  vitest.config.ts       # 纯逻辑单测
 ```
+
+> 单测在 `src/dom/*.test.ts`（vitest + happy-dom，`// @vitest-environment happy-dom`）；测试文件无独立 vitest.config.ts。
 
 ### 4.2 manifest 权限审计
 
@@ -346,6 +352,7 @@ packages/extension/
 | `host_permissions` (`<all_urls>`) | 对任意站点执行 DOM 操作        | **控制浏览器的固有代价**，README/skill 中明示 |
 | `webNavigation`                   | 追踪导航 → navId               | 监控历史                                      |
 | `storage`                         | 保存 server URL / token        | 本机                                          |
+| `alarms`                          | SW 保活（0.5min 周期唤醒）     | Chrome 120+ 支持最小周期 0.5min               |
 
 > 备用方案：`activeTab` + 用户手势可减小 host_permissions，但会破坏"无人值守批量操作"；v1 选择 `<all_urls>` + 文档明示。
 
@@ -353,7 +360,7 @@ packages/extension/
 
 - 持 WebSocket（server 地址 + token 来自 storage/popup 配置）。
 - 重连策略：指数退避（1s→30s 上限）+ jitter；token 失效提示重新配对。
-- 保活：MV3 SW 空闲可能被回收。WS 活动通常能抑制回收，但实现时须实测；若被回收，备选 offscreen document 持连接（Chrome 专属）——Phase 4 验证并记录结论。
+- 保活：MV3 SW 空闲 ~30s 会被 Chrome 回收。实测采用 `chrome.alarms`（0.5min，manifest 需 `alarms` 权限）周期性唤醒 SW，若 WS 断开则重连——真实 Chrome 152 验证：空闲 85s/70s 均不掉线。更强备选：offscreen document 持连接（未启用，记录于 4.3/10）。注意：SW 顶层任何 API 抛错会中断全部监听器注册（曾因缺 `alarms` 权限导致 popup/WS 全失效），关键块需 try/catch 防御。
 - 消息路由：收到命令 → 解析 tabId → `chrome.tabs.sendMessage` 到对应 tab 的 content script（无 tab 的会话级命令直接处理）→ 汇总响应。content script 若未注入则动态注入。
 - navId 追踪：`chrome.webNavigation.onCommitted`（mainFrame, isTopLevel）自增 navId，随响应回传 → server 同步 context 快照。
 
@@ -376,12 +383,12 @@ packages/extension/
 
 ## 5. Parkinglot Skill 设计
 
-安装在项目 `.agents/skills/parkinglot/SKILL.md`（与现有 skills 同目录）。大纲：
+安装在 `skills/parkinglot/SKILL.md`（与 `.agents/skills/` 通过符号链接互通）。大纲：
 
 ```
 metadata: 名称、适用场景（需要浏览器操作时）、触发词
-1. 前置：启动 server（pl server up? → 用 pnpm --filter server dev）、加载扩展并配对（打开 chrome://extensions → Load unpacked → dist/）
-2. 命令参考：表格（链接 docs/protocol.md）
+1. 前置：启动 server（用 pnpm --filter @parkinglot/server start）、加载扩展并配对（打开 chrome://extensions → Load unpacked → packages/extension/dist）
+2. 命令参考：表格（链接 references/protocol.md）
 3. 会话心智模型：session / tab / navId / context 快照——"响应里的 context 变了就是页面变了"
 4. 标准工作流模板：
    - 查资料：search → goto top result → extract → 滚动 → extract
@@ -447,7 +454,7 @@ $ pl session list / use S1 / close S1  # 显式管理
 - 公共类型 `ContextSnapshot/PageSnapshot/ElementInfo/SessionInfo`；错误码枚举
 - Zod schema：请求/响应校验（Postel）
 - vitest：信封、命令参数校验、错误码归一化
-- 产物：`docs/protocol.md`（命令参考，skill 引用的权威文档）
+- 产物：`skills/parkinglot/references/protocol.md`（命令参考，skill 引用的权威文档）
 
 ### Phase 3：`parkinglot-server`（CLI + Relay + HITL + 账本）
 
@@ -472,7 +479,7 @@ $ pl session list / use S1 / close S1  # 显式管理
 
 - 编写 `parkinglot` SKILL.md 并安装为 project skill（沿用 `.agents/skills/` 目录）
 - 端到端冒烟：起 server → 加载扩展配对 → CLI 走通 goto/extract/click/scroll/screenshot/fetch/search → 验证 session 连续性（两次命令同一 context，navId 递增）
-- 收尾：README quick start、AGENTS.md 更新、`docs/protocol.md` 核对、首次 git 提交
+- 收尾：README quick start、AGENTS.md 更新、`skills/parkinglot/references/protocol.md` 核对、首次 git 提交
 
 ### 验收标准（MVP done）
 
@@ -495,9 +502,10 @@ $ pl session list / use S1 / close S1  # 显式管理
 - 视觉模型（截图→元素映射）、无障碍树驱动
 - 远程部署（本项目默认本机回环模式）
 
-## 10. 待决问题 / 后续扩展
+## 10. 待决问题 / 后续扩展（当前状态）
 
-- SW 保活实测后是否迁移 offscreen document（Phase 4 决定并记录）
-- HITL 是否保留 popup 队列（若砍掉则只留日志审计 + `auto` 模式）
-- `fullPage` 截图 v1 仅 visible viewport，后续可做滚动拼接
-- 多 session 并行时 Agent 是否需要 `--session` 之外更友好的命名（别名）
+- SW 保活：alarms 方案已实现并真机验证（空闲 85s/70s 不掉线）→ **offscreen document 迁移暂缓**（更强备选，连接中断窗口可进一步趋零时再启用）
+- HITL：popup 批准队列已保留并接通 `approval.respond` 链路（单测 + mock 端到端验证；真机 popup 交互待用户实操）
+- `fullPage` 截图：参数存在但 v1 仅 captureVisibleTab 视口，**滚动拼接未实现**（协议标记实验）
+- session 命名：`--session` 之外更友好的别名（未做）
+- 实测发现并已修复的坑（记录）：manifest 需 `alarms` 权限否则 SW 顶层崩溃；`captureVisibleTab` 需 windowId；页面 fetch 默认 `credentials: 'same-origin'`（跨域 `'include'` 会被 `ACAO:*` API 拒绝）；`search` 默认引擎为 DDG html 版（Google 需 `--engine google`，真实解析已验证）

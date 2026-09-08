@@ -62,7 +62,7 @@ Agent 调用指南见 `parkinglot` skill（`.agents/skills/parkinglot/`）。
 ## 文档
 
 - `docs/initial-plan.md` — 初始设计与实施计划（架构、协议、命令集、安全模型、HITL、验收标准）
-- 协议命令参考将在协议层完成后生成于 `docs/protocol.md`
+- 协议命令参考见 `skills/parkinglot/references/protocol.md`
 
 ## 许可证
 

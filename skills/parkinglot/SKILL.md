@@ -22,7 +22,7 @@ Agent ── pl <command> ──▶ parkinglot-server (ws://127.0.0.1:8787) ─�
 
 Config via env (defaults safe): `PARKINGLOT_PORT=8787`, `PARKINGLOT_BIND=127.0.0.1`, `PARKINGLOT_TOKEN`, `PARKINGLOT_ALLOWED_HOSTS` (comma list), `PARKINGLOT_ENABLE_EVAL=1` (off by default).
 
-## 2. Commands (full reference: `docs/protocol.md`)
+## 2. Commands (full reference: `references/protocol.md`)
 
 Navigation/state: `pl status`, `pl ping`, `pl goto <url>`, `pl back`, `pl forward`, `pl reload`
 Interact: `pl click <css>`, `pl click-text <text>`, `pl fill <css> <value>`, `pl type <css> <text>`, `pl press <key>`, `pl hover <css>`, `pl select <css> --value <v>`
