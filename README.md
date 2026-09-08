@@ -90,7 +90,7 @@ pl page-info                   # url/标题/视口/滚动位置
 pl click-text "Learn more"     # 按可见文本点击（真实点击 → 页面导航）
 pl scroll down                 # 滚动
 pl screenshot --path shot.png  # 截图写入文件
-pl search "parkinglot"         # 搜索结果（默认 DuckDuckGo；加 --engine google 用 Google）
+pl search "parkinglot"         # Google 搜索结果（默认引擎）；--page 2 取下一页
 pl fetch https://api.github.com/zen --header "Accept: application/json"
 pl logs --tail 20              # 命令账本
 ```
@@ -99,29 +99,29 @@ pl logs --tail 20              # 命令账本
 
 全局选项：`--server <url>`（默认 `http://127.0.0.1:8787`）、`--json`（结构化输出）、`--timeout <ms>`（默认 30000）、`--session <id>`、`--path <file>`（screenshot 落盘）。
 
-| 命令                                                     | 说明                           |
-| -------------------------------------------------------- | ------------------------------ |
-| `pl status` / `pl ping`                                  | 扩展在线？server/协议版本      |
-| `pl goto <url>`                                          | 导航（无 session 自动创建）    |
-| `pl back` / `forward` / `reload`                         | 历史导航                       |
-| `pl click <css>` / `pl click-text <text>`                | 点击元素 / 按文本点击          |
-| `pl fill <css> <value>`                                  | 填充输入框（整体替换）         |
-| `pl type <css> <text>`                                   | 逐键输入                       |
-| `pl press <key> [--selector <css>]`                      | 按键                           |
-| `pl hover <css>`                                         | 悬停                           |
-| `pl select <css> --value <v>`（或 `--label <l>`）        | 选择下拉项                     |
-| `pl scroll <up\|down\|top\|bottom\|amount>`              | 滚动                           |
-| `pl screenshot [--path x.png] [--format png\|jpeg]`      | 截图（`--full` 为实验性）      |
-| `pl extract [--limit N]`                                 | 页面可读文本（LLM 友好裁剪）   |
-| `pl page-info`                                           | 页面 url/标题/视口/滚动        |
-| `pl fetch <url> [--method] [--header "k: v"]… [--body]`  | 页面上下文网络请求（带登录态） |
-| `pl search <query> [--engine duckduckgo\|google]`        | 搜索引擎结果列表               |
-| `pl tabs`                                                | 列出标签页                     |
-| `pl tab <id>` / `pl tab-new <url>` / `pl tab-close [id]` | 切换 / 新建 / 关闭标签页       |
-| `pl wait [--ms N \| --selector css \| --condition load]` | 等待                           |
-| `pl session list\|new\|use\|close\|mode`                 | session 管理                   |
-| `pl logs [--tail N] [--follow]`                          | 命令账本                       |
-| `pl approve <requestId>` / `pl deny <requestId>`         | 远程批准 / 拒绝 HITL 请求      |
+| 命令                                                         | 说明                                         |
+| ------------------------------------------------------------ | -------------------------------------------- |
+| `pl status` / `pl ping`                                      | 扩展在线？server/协议版本                    |
+| `pl goto <url>`                                              | 导航（无 session 自动创建）                  |
+| `pl back` / `forward` / `reload`                             | 历史导航                                     |
+| `pl click <css>` / `pl click-text <text>`                    | 点击元素 / 按文本点击                        |
+| `pl fill <css> <value>`                                      | 填充输入框（整体替换）                       |
+| `pl type <css> <text>`                                       | 逐键输入                                     |
+| `pl press <key> [--selector <css>]`                          | 按键                                         |
+| `pl hover <css>`                                             | 悬停                                         |
+| `pl select <css> --value <v>`（或 `--label <l>`）            | 选择下拉项                                   |
+| `pl scroll <up\|down\|top\|bottom\|amount>`                  | 滚动                                         |
+| `pl screenshot [--path x.png] [--format png\|jpeg]`          | 截图（`--full` 为实验性）                    |
+| `pl extract [--limit N]`                                     | 页面可读文本（LLM 友好裁剪）                 |
+| `pl page-info`                                               | 页面 url/标题/视口/滚动                      |
+| `pl fetch <url> [--method] [--header "k: v"]… [--body]`      | 页面上下文网络请求（带登录态）               |
+| `pl search <query> [--engine google\|duckduckgo] [--page N]` | 搜索引擎结果（默认 google；google 支持分页） | 结果列表 + 页码 |
+| `pl tabs`                                                    | 列出标签页                                   |
+| `pl tab <id>` / `pl tab-new <url>` / `pl tab-close [id]`     | 切换 / 新建 / 关闭标签页                     |
+| `pl wait [--ms N \| --selector css \| --condition load]`     | 等待                                         |
+| `pl session list\|new\|use\|close\|mode`                     | session 管理                                 |
+| `pl logs [--tail N] [--follow]`                              | 命令账本                                     |
+| `pl approve <requestId>` / `pl deny <requestId>`             | 远程批准 / 拒绝 HITL 请求                    |
 
 退出码：`0` 成功 · `2` 参数错误 · `3` 目标/会话错误 · `4` 扩展离线 · `5` 审批未决/被拒 · `6` 超时 · `1` 其他。
 
@@ -184,15 +184,15 @@ pl fetch https://api.github.com/user --header "Accept: application/json"
 
 ## 故障排查
 
-| 现象                                    | 处理                                                                                    |
-| --------------------------------------- | --------------------------------------------------------------------------------------- |
-| `EXTENSION_OFFLINE`                     | 扩展未配对/掉线：打开 popup 确认 **Connected ✓**；server 是否在跑、token 是否一致       |
-| popup 点保存无反应                      | 扩展需重新加载：chrome://extensions → ParkingLot → 刷新按钮（每次 `pnpm build` 后都要） |
-| `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS` | 先 `pl extract` 看页面实际内容；改用更具体的 CSS selector                               |
-| `SESSION_NOT_FOUND` / `No tab with id`  | session 指向的标签页被关闭：`pl session close <id>` 后重新 `pl goto`                    |
-| `TIMEOUT`                               | 页面慢：`--timeout 60000` 重试                                                          |
-| 命令作用到 Chrome 内部页报错            | content script 无法注入 `chrome://` / Web Store 页——先在普通网页上操作                  |
-| `search` 结果为空                       | 搜索引擎反爬/验证码：换 `--engine duckduckgo` 或用 `pl goto` 直接访问                   |
+| 现象                                    | 处理                                                                                                                          |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `EXTENSION_OFFLINE`                     | 扩展未配对/掉线：打开 popup 确认 **Connected ✓**；server 是否在跑、token 是否一致                                             |
+| popup 点保存无反应                      | 扩展需重新加载：chrome://extensions → ParkingLot → 刷新按钮（每次 `pnpm build` 后都要）                                       |
+| `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS` | 先 `pl extract` 看页面实际内容；改用更具体的 CSS selector                                                                     |
+| `SESSION_NOT_FOUND` / `No tab with id`  | session 指向的标签页被关闭：`pl session close <id>` 后重新 `pl goto`                                                          |
+| `TIMEOUT`                               | 页面慢：`--timeout 60000` 重试                                                                                                |
+| 命令作用到 Chrome 内部页报错            | content script 无法注入 `chrome://` / Web Store 页——先在普通网页上操作                                                        |
+| `search` 结果为空/需更多                | 反爬/验证码：换 `--engine duckduckgo` 或 `pl goto` 直接访问；取更多结果用 `--page 2`（google 支持，duckduckgo 不支持 offset） |
 
 ## 安全须知
 

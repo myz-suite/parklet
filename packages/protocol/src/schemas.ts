@@ -99,7 +99,11 @@ export const paramsSchemas = {
     body: z.string().optional(),
     returnType: z.enum(['text', 'json', 'binary']).optional(),
   }),
-  search: z.object({ query: z.string().min(1), engine: z.string().optional() }),
+  search: z.object({
+    query: z.string().min(1),
+    engine: z.string().optional(),
+    page: z.number().int().min(1).optional(),
+  }),
   // 标签页
   'list-tabs': noopSchema,
   'create-tab': z.object({ url: httpUrlSchema }),

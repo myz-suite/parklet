@@ -28,7 +28,7 @@ Navigation/state: `pl status`, `pl ping`, `pl goto <url>`, `pl back`, `pl forwar
 Interact: `pl click <css>`, `pl click-text <text>`, `pl fill <css> <value>`, `pl type <css> <text>`, `pl press <key>`, `pl hover <css>`, `pl select <css> --value <v>`
 View: `pl scroll <up|down|top|bottom|amount>`, `pl screenshot --path out.png`
 Extract: `pl extract [--limit N]`, `pl page-info`, `pl tabs`, `pl tab <id>`, `pl tab-new <url>`, `pl tab-close`
-Network in page: `pl fetch <url> [--method POST] [--header "k: v"] [--body ...]`, `pl search <query>`
+Network in page: `pl fetch <url> [--method POST] [--header "k: v"] [--body ...]`, `pl search <query> [--engine google|duckduckgo] [--page N]` (default engine google; paging via --page)
 Wait/session: `pl wait [--ms N | --selector css | --condition load]`, `pl session list|new|use|close`
 Ops: `pl logs [--follow]`, `pl approve <requestId>` / `pl deny <requestId>`
 

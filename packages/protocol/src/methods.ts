@@ -1,6 +1,7 @@
 import type {
   ElementInfo,
   PageSnapshot,
+  SearchPagination,
   SearchResult,
   SessionInfo,
   TabInfo,
@@ -171,6 +172,8 @@ export interface FetchParams {
 export interface SearchParams {
   query: string;
   engine?: string;
+  /** 结果页页码（1-based，默认 1；每页 ~10 条） */
+  page?: number;
 }
 
 export interface CreateTabParams {
@@ -269,7 +272,7 @@ export interface ResultMap {
     headers: Record<string, string>;
     body: string;
   };
-  search: { results: SearchResult[] };
+  search: { results: SearchResult[]; pagination?: SearchPagination };
   // 标签页
   'list-tabs': { tabs: TabInfo[] };
   'create-tab': { tab: TabInfo };

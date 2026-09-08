@@ -115,10 +115,12 @@ pl session list|use|new|close
 
 ### 页面内网络（在真实页面上下文执行，带登录态）
 
-| 命令     | 参数                                                 | 返回 data                                 | 写          |
-| -------- | ---------------------------------------------------- | ----------------------------------------- | ----------- |
-| `fetch`  | `url`、`method?`、`headers?`、`body?`、`returnType?` | `{ status, statusText?, headers, body }`  | conditional |
-| `search` | `query`、`engine?`                                   | `{ results: [{ title, url, snippet? }] }` | never       |
+| 命令     | 参数                                                                              | 返回 data                                                                      | 写          |
+| -------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------- |
+| `fetch`  | `url`、`method?`、`headers?`、`body?`、`returnType?`                              | `{ status, statusText?, headers, body }`                                       | conditional |
+| `search` | `query`、`engine?`（google\|duckduckgo；默认 google）、`page?`（1-based，默认 1） | `{ results: [{ title, url, snippet? }], pagination: { query, engine, page } }` | never       |
+
+> 分页注记：`page` 按引擎偏移结果——**google 支持**（10/页，已在真实 Chrome 验证）。DuckDuckGo **html 端点忽略偏移**，`duckduckgo` 配 `page > 1` 会重复返回第 1 页；需要翻页时用默认 `google` 引擎。
 
 ### 标签页
 

@@ -56,6 +56,7 @@ export type {
   ElementInfo,
   Locator,
   PageSnapshot,
+  SearchPagination,
   SearchResult,
   SessionInfo,
   SessionMode,

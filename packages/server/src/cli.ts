@@ -249,7 +249,17 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
       break;
     }
     case 'search': {
-      const d = data as { results?: Array<{ title?: string; url?: string; snippet?: string }> };
+      const d = data as {
+        results?: Array<{ title?: string; url?: string; snippet?: string }>;
+        pagination?: { query?: string; engine?: string; page?: number };
+      };
+      const pg = d.pagination;
+      if (pg) {
+        const next = (pg.page ?? 1) + 1;
+        console.log(
+          `[${pg.engine ?? 'duckduckgo'} · page ${pg.page ?? 1} of "${pg.query ?? ''}" — 用 --page ${next} 取下一页]`,
+        );
+      }
       (d.results ?? []).forEach((r, i) => {
         console.log(`${i + 1}. ${r.title ?? ''}\n   ${r.url ?? ''}\n   ${r.snippet ?? ''}`);
       });
@@ -433,7 +443,12 @@ export function buildProgram(): Command {
         (typeof first === 'string' && ['up', 'down', 'top', 'bottom'].includes(first)
           ? first
           : undefined);
-      const amount = opts.amount ?? (!direction && first !== undefined ? Number(first) : undefined);
+      const amount =
+        opts.amount !== undefined
+          ? Number(opts.amount)
+          : !direction && first !== undefined
+            ? Number(first)
+            : undefined;
       return { direction, amount, selector: opts.selector };
     },
     (c) =>
@@ -462,7 +477,10 @@ export function buildProgram(): Command {
     'extract',
     'extract',
     'extract readable page text',
-    (opts) => ({ limit: opts.limit, mode: opts.mode }),
+    (opts) => ({
+      limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
+      mode: opts.mode,
+    }),
     (c) => c.option('--limit <chars>').option('--mode <m>', 'text|structured', 'text'),
   );
   register(
@@ -499,9 +517,17 @@ export function buildProgram(): Command {
     program,
     'search',
     'search',
-    'search the web via a search engine',
-    (opts, args) => ({ query: args[0], engine: opts.engine }),
-    (c) => c.argument('<query>').option('--engine <e>', 'search engine', 'google'),
+    'search the web (paged: add --page N for later results)',
+    (opts, args) => ({
+      query: args[0],
+      engine: opts.engine,
+      page: opts.page !== undefined ? Number(opts.page) : undefined,
+    }),
+    (c) =>
+      c
+        .argument('<query>')
+        .option('--engine <e>', 'search engine (google|duckduckgo; default google)')
+        .option('--page <n>', 'result page (1-based; google=10/page, duckduckgo=30/page)', '1'),
   );
 
   // 标签页

@@ -115,10 +115,12 @@ Write-access markers drive HITL: `always` = needs approval; `never` = read-only;
 
 ### In-page Network (executed in the real page context, with login state)
 
-| Command  | Params                                               | Returns data                              | Write       |
-| -------- | ---------------------------------------------------- | ----------------------------------------- | ----------- |
-| `fetch`  | `url`, `method?`, `headers?`, `body?`, `returnType?` | `{ status, statusText?, headers, body }`  | conditional |
-| `search` | `query`, `engine?`                                   | `{ results: [{ title, url, snippet? }] }` | never       |
+| Command  | Params                                                                                | Returns data                                                                   | Write       |
+| -------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------- |
+| `fetch`  | `url`, `method?`, `headers?`, `body?`, `returnType?`                                  | `{ status, statusText?, headers, body }`                                       | conditional |
+| `search` | `query`, `engine?` (google\|duckduckgo; default google), `page?` (1-based, default 1) | `{ results: [{ title, url, snippet? }], pagination: { query, engine, page } }` | never       |
+
+> Pagination note: `page` offsets results per engine — **google supports it** (10/page, verified on real Chrome). The DuckDuckGo **html endpoint ignores the offset**, so `duckduckgo` with `page > 1` re-returns page 1; prefer the default `google` engine when paging.
 
 ### Tabs
 

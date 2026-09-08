@@ -79,6 +79,14 @@ describe('validateParams', () => {
     expect(validateParams('wait', { condition: 'networkidle' }).success).toBe(true);
   });
 
+  it('accepts a 1-based search page and rejects non-positive pages', () => {
+    expect(validateParams('search', { query: 'x', page: 2 }).success).toBe(true);
+    expect(validateParams('search', { query: 'x' }).success).toBe(true);
+    expect(validateParams('search', { query: 'x', page: 0 }).success).toBe(false);
+    expect(validateParams('search', { query: 'x', page: -1 }).success).toBe(false);
+    expect(validateParams('search', { query: 'x', page: 1.5 }).success).toBe(false);
+  });
+
   it('validates every declared method against its schema', () => {
     // 所有 method 都有 schema（完整性由 paramsSchemas satisfies 映射在编译期保证），
     // 这里抽查每个 method 空参数至少不抛异常（成功与否按规则）。

@@ -62,5 +62,12 @@ export interface SearchResult {
   snippet?: string;
 }
 
+/** search 的分页信息（哪一页的什么查询），便于 Agent 续取后续结果。 */
+export interface SearchPagination {
+  query: string;
+  engine: string;
+  page: number;
+}
+
 /** 定位器表示：CSS 选择器或可见文本（v1 两种，后续可扩展 css=/text=/role= 前缀）。 */
 export type Locator = { type: 'css'; value: string } | { type: 'text'; value: string };

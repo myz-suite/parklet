@@ -13,6 +13,7 @@ import type {
   PopupRequest,
   PopupResponse,
 } from './shared/messages.js';
+import { buildSearchUrl } from './dom/searchUrl.js';
 
 /**
  * Background service worker：
@@ -308,19 +309,24 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
 }
 
 async function handleSearch(req: Request, tabId: number): Promise<WireResult> {
-  const { query, engine } = req.params as { query: string; engine?: string };
-  const url =
-    engine === 'google'
-      ? `https://www.google.com/search?q=${encodeURIComponent(query)}`
-      : `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const { query, engine, page } = req.params as { query: string; engine?: string; page?: number };
+  const url = buildSearchUrl(query, engine, page);
   await chrome.tabs.update(tabId, { url });
   await waitForNavigation(tabId);
   await sleep(600); // 等 content script 在 document_idle 注入
   const { results } = (await sendToContent(
-    { id: req.id, method: '_search-parse', params: { limit: 10 } },
+    { id: req.id, method: '_search-parse', params: { limit: 25 } },
     tabId,
   )) as { results: SearchResult[] };
-  return { sessionId: req.sessionId, tabId, context: await contextOf(tabId), data: { results } };
+  return {
+    sessionId: req.sessionId,
+    tabId,
+    context: await contextOf(tabId),
+    data: {
+      results,
+      pagination: { query, engine: engine ?? 'google', page: page ?? 1 },
+    },
+  };
 }
 
 async function sendToContent(req: WireRequest, tabId: number): Promise<unknown> {
