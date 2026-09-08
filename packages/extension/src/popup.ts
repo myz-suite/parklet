@@ -17,6 +17,13 @@ async function send<T = PopupResponse>(message: unknown): Promise<T> {
 function setStatus(connected: boolean): void {
   statusDot.className = `dot ${connected ? 'online' : 'offline'}`;
   statusText.textContent = connected ? 'connected' : 'disconnected';
+  if (connected) {
+    saveBtn.textContent = 'Connected ✓';
+    saveBtn.disabled = true;
+  } else {
+    saveBtn.textContent = 'Save & Connect';
+    saveBtn.disabled = false;
+  }
 }
 
 async function refreshConfig(): Promise<void> {

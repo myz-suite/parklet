@@ -182,7 +182,9 @@ export async function executeDomAction(
   }
 }
 
-/** 页面上下文 fetch：带登录态（credentials: include），返回状态/头/体。 */
+/** 页面上下文 fetch：同域请求自动携带登录态 cookie。
+ * 默认 credentials: 'same-origin' —— 跨域 'include' 会要求服务器返回精确
+ * origin + Access-Control-Allow-Credentials，公共 API（ACAO:*）会被浏览器拒绝。 */
 async function pageFetch(params: Record<string, unknown>): Promise<{
   status: number;
   statusText?: string;
@@ -194,7 +196,7 @@ async function pageFetch(params: Record<string, unknown>): Promise<{
     method: String(params.method ?? 'GET'),
     headers,
     body: params.body !== undefined ? String(params.body) : undefined,
-    credentials: 'include',
+    credentials: 'same-origin',
     redirect: 'follow',
   });
   const headerEntries: Record<string, string> = {};

@@ -45,4 +45,4 @@ All 5 phases of `docs/initial-plan.md` are complete: workspace skeleton → prot
 
 To run the system end-to-end: `pnpm --filter @parkinglot/server start` → build & load the extension from `packages/extension/dist` in Chrome → pair it in the popup → use `pl <command>` (see `parkinglot` skill and `docs/protocol.md`).
 
-Known limitation: background SW keep-alive relies on WS activity; if Chrome reclaims the SW in practice, migrate the WebSocket to an offscreen document (noted in `packages/extension/src/background.ts`).
+Keep-alive: SW holds the WS connection; `chrome.alarms` (0.5 min) wakes the SW to reconnect when Chrome reclaims it. Verified on real Chrome (stays online after 85s+70s idle). Stronger fallback if ever needed: move the WebSocket to an offscreen document.

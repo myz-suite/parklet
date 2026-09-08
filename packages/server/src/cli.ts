@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
 import { Command } from 'commander';
 import {
   PROTOCOL_VERSION,
@@ -13,6 +14,8 @@ interface GlobalOpts {
   json: boolean;
   timeout: string;
   session?: string;
+  /** screenshot 的 --path（写文件目标） */
+  path?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -227,8 +230,13 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
     }
     case 'screenshot': {
       const d = data as { data?: string; path?: string };
-      if (d.path) console.log(`📸 saved to ${d.path}`);
-      else console.log(`📸 ${((d.data?.length ?? 0) / 1024).toFixed(1)} KB base64`);
+      const target = d.path ?? opts.path;
+      if (typeof target === 'string' && target.length > 0 && typeof d.data === 'string') {
+        writeFileSync(target, Buffer.from(d.data, 'base64'));
+        console.log(`📸 saved to ${target}`);
+      } else {
+        console.log(`📸 ${((d.data?.length ?? 0) / 1024).toFixed(1)} KB base64`);
+      }
       break;
     }
     case 'list-tabs': {
@@ -306,6 +314,7 @@ async function run(
     json: Boolean(opts.json),
     timeout: String(opts.timeout ?? '30000'),
     session: typeof opts.session === 'string' ? opts.session : undefined,
+    path: typeof opts.path === 'string' ? opts.path : undefined,
   };
   const res = await callCommand(method, params, g);
   if ('error' in res) {

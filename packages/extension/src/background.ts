@@ -21,8 +21,8 @@ import type {
  * - navId 追踪（chrome.webNavigation）+ tab-activated 事件上报
  * - popup 消息（配置/状态/HITL 批准队列）
  *
- * 保活说明：WS 连接与心跳由 SW 持有；Chrome 会在 WS 消息到达时唤醒 SW。
- * 若实测 SW 被空闲回收导致断连，迁移到 offscreen document（见 docs/initial-plan.md）。
+ * 保活：WS 连接由 SW 持有；chrome.alarms（0.5min）周期性唤醒 SW，若连接已断开则重连
+ * （已在真实 Chrome 验证：空闲 85s/70s 均不掉线）。offscreen document 为更强备选方案。
  */
 
 // ---------------------------------------------------------------------------
@@ -274,7 +274,9 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
     }
     case 'screenshot': {
       const format = (req.params as { format?: string }).format ?? 'png';
-      const dataUrl = await chrome.tabs.captureVisibleTab(tabId, {
+      // captureVisibleTab 接收 windowId（可选）；先从 tabId 解析出 windowId
+      const tab = await chrome.tabs.get(tabId);
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
         format: format as 'png' | 'jpeg',
       });
       const data = dataUrl.split(',')[1] ?? dataUrl;
@@ -381,6 +383,28 @@ function handleServerEvent(event: EventMessage): void {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---------------------------------------------------------------------------
+// SW 保活
+//
+// MV3 service worker 在 ~30s 无事件后会被 Chrome 回收，WebSocket 随进程销毁。
+// 用 chrome.alarms 周期性唤醒（最小周期 0.5min，Chrome 120+），被唤醒时若连接
+// 已断开立即重连；SW 每次唤醒都会重跑顶层代码，此处只负责提供唤醒事件。
+// ---------------------------------------------------------------------------
+
+// 保活块整体防御：任一 API 不可用都不应中断顶层脚本（曾因缺 alarms 权限导致
+// chrome.alarms.create 抛错、后续监听器全部未注册、popup/WS 全失效）。
+try {
+  chrome.alarms.create('parkinglot-keepalive', { periodInMinutes: 0.5 });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== 'parkinglot-keepalive') return;
+    if (ws === null || ws.readyState !== WebSocket.OPEN) {
+      void connect();
+    }
+  });
+} catch (err) {
+  console.error('[parkinglot] alarms unavailable:', err);
 }
 
 // ---------------------------------------------------------------------------
