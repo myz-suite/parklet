@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "ParkingLot",
+  "version": "0.1.0",
+  "description": "Agent-controlled browser bridge: connects to parkinglot-server and executes browser commands (goto/click/extract/scroll/screenshot/fetch/search).",
+  "permissions": ["tabs", "scripting", "webNavigation", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ParkingLot"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

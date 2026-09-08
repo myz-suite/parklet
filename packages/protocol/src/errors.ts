@@ -1,0 +1,54 @@
+/**
+ * 协议错误码与错误类型。
+ * 错误码是 wire 协议的一部分：extension 与 server 两侧都必须使用同一套枚举。
+ */
+export const ERROR_CODES = [
+  // 信封/参数层
+  'INVALID_REQUEST',
+  'INVALID_PARAMS',
+  'UNKNOWN_METHOD',
+  'MESSAGE_TOO_LARGE',
+  // 连接层
+  'EXTENSION_OFFLINE',
+  'EXTENSION_NO_TAB',
+  // 会话/寻址层
+  'SESSION_NOT_FOUND',
+  'SESSION_TAB_CLOSED',
+  // 执行层
+  'TIMEOUT',
+  'TARGET_NOT_FOUND',
+  'TARGET_AMBIGUOUS',
+  'URL_INVALID',
+  'HOST_NOT_ALLOWED',
+  'EVAL_DISABLED',
+  // HITL 层
+  'PENDING_APPROVAL',
+  'APPROVAL_DENIED',
+  'APPROVAL_TIMEOUT',
+  // 兜底
+  'INTERNAL',
+] as const;
+
+export type ErrorCode = (typeof ERROR_CODES)[number];
+
+export interface ProtocolErrorData {
+  requestId?: string;
+  [key: string]: unknown;
+}
+
+/** 协议层错误：携带稳定的机器可读 code，供 CLI/Agent 决策。 */
+export class ParkinglotError extends Error {
+  readonly code: ErrorCode;
+  readonly data: ProtocolErrorData | undefined;
+
+  constructor(code: ErrorCode, message: string, data?: ProtocolErrorData) {
+    super(message);
+    this.name = 'ParkinglotError';
+    this.code = code;
+    this.data = data;
+  }
+}
+
+export function isErrorCode(value: unknown): value is ErrorCode {
+  return typeof value === 'string' && (ERROR_CODES as readonly string[]).includes(value);
+}
