@@ -105,7 +105,7 @@ ls packages/extension/dist/      # manifest.json, background.js, content.js,
 
 - [ ] 清理 `dist/` 中的 `*.map`（如需发布 sourcemap 可选保留；发布包建议去除以减小体积并避免暴露源码结构——评估后决定，保持一致）
 - [ ] 核对 `manifest.json`：`version` 递增（SemVer，见 §7）；`name`/`description` 与商店一致；`minimum_chrome_version` 建议声明（依赖 `chrome.alarms` 0.5min → Chrome ≥ 120；可写明以阻止旧版本安装）
-- [ ] 压缩：`cd packages/extension && zip -r ../extension-<version>.zip dist/`（zip 根须包含 manifest.json）
+- [ ] 压缩（**zip 根必须直接含 manifest.json**，不能带 dist/ 前缀）：`cd packages/extension/dist && zip -r ../parkinglot-extension-<version>.zip . -x "*.map"`（`-x "*.map"` 排除 sourcemap，产物更小）
 - [ ] 用 CWS Developer Dashboard 上传 zip
 
 > 构建一致性：`pnpm build` 需在干净 checkout 上通过；发版前跑 `pnpm test`（102 用例）与 `pnpm lint`。

@@ -21,3 +21,4 @@ coverage/
 # Chrome packed extension artifacts
 *.crx
 *.pem
+*.zip
