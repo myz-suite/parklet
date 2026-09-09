@@ -338,7 +338,7 @@ async function run(
 
 export function buildProgram(): Command {
   const program = new Command()
-    .name('pl')
+    .name('plt')
     .description('ParkingLot CLI — control the browser through parkinglot-server')
     .version(PROTOCOL_VERSION)
     .option('--server <url>', 'server base URL', 'http://127.0.0.1:8787')

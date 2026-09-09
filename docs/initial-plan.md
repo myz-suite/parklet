@@ -16,7 +16,7 @@
 
 | 术语                     | 含义                                                                                       |
 | ------------------------ | ------------------------------------------------------------------------------------------ |
-| **Agent**                | LLM 驱动的程序（本项目的使用者），通过 `pl` CLI（或 HTTP）向 server 发命令                 |
+| **Agent**                | LLM 驱动的程序（本项目的使用者），通过 `plt` CLI（或 HTTP）向 server 发命令                 |
 | **parkinglot-server**    | 常驻 relay 守护进程（Node + TypeScript）。一面接扩展的 WebSocket，一面接 Agent 的 CLI/HTTP |
 | **parkinglot-extension** | Chrome Manifest V3 扩展。持有 WebSocket 连接，把命令翻译为真实的浏览器操作                 |
 | **Session**              | 逻辑层寻址单元：`{ id, tabId, mode, navId, ... }`，由 server 维护，提供命令的连续性        |
@@ -27,7 +27,7 @@
 ### 1.3 系统形态
 
 ```
-┌────────────┐   pl goto https://x   ┌───────────────────┐   WebSocket    ┌─────────────────────┐
+┌────────────┐   plt goto https://x   ┌───────────────────┐   WebSocket    ┌─────────────────────┐
 │   Agent    │ ────────────────────▶ │  parkinglot-server │ ─────────────▶ │  parkinglot-extension │
 │  (LLM)     │ ◀──────────────────── │   (relay 守护进程)  │ ◀───────────── │   (Chrome MV3)       │
 └────────────┘   result + context    └───────────────────┘    token 配对   └──────────┬──────────┘
@@ -226,7 +226,7 @@ packages/server/src/
 ### 3.2 WebSocket Relay
 
 - 绑定 `127.0.0.1:PARKINGLOT_PORT`（默认 8787）。
-- 扩展连接时发 `hello { token, extensionVersion }`，校验 token（默认通过 `pl pair` 生成并写入扩展配置/URL 参数）。
+- 扩展连接时发 `hello { token, extensionVersion }`，校验 token（默认通过 `plt pair` 生成并写入扩展配置/URL 参数）。
 - 心跳：每 15s ping / pong，失去响应 3 次判定离线。
 - 断线：extension 侧指数退避重连（1s→2s→…上限 30s），session registry 保留但标记离线；重连后自动恢复路由。
 
@@ -247,28 +247,28 @@ interface Session {
 - 每个命令先"寻址"：resolve target → 返回 sessionId/tabId → 命令转发时带上 tabId。
 - 命令成功/失败都要更新 `lastUsedAt` 与 context 快照缓存。
 
-### 3.4 CLI（`pl`）
+### 3.4 CLI（`plt`）
 
 全局选项：`--server <url>`（默认 `http://127.0.0.1:8787`，CLI 走 HTTP 通道）、`--json`、`--timeout <ms>`、`--session <id>`、`--path <file>`（screenshot 写盘）。
 
 | 命令                                                                 | 说明                                          | 默认输出           |
 | -------------------------------------------------------------------- | --------------------------------------------- | ------------------ |
-| `pl status` / `pl ping`                                              | 扩展在线？server 版本                         | text 摘要          |
-| `pl goto <url>`                                                      | 导航（无 session 自动创建）                   | context 快照       |
-| `pl back / forward / reload`                                         | 历史导航                                      | context            |
-| `pl click <selector>` / `pl click-text <text>`                       | 点击                                          | ElementInfo        |
-| `pl fill <selector> <value>` / `pl type <sel> <text>`                | 输入                                          | ElementInfo        |
-| `pl press <key>` / `pl hover <sel>` / `pl select <sel> <value>`      | 交互                                          | ElementInfo        |
-| `pl scroll [up                                                       | down                                          | top                | bottom                 | amount]` | 滚动 | 视口摘要 |
-| `pl screenshot [--path x.png] [--full]`                              | 截图（默认 base64 输出长度摘要 + 可选写文件） | 摘要               |
-| `pl extract` / `pl page-info`                                        | 页面可读文本（`--limit` 裁剪）/ 页面信息      | 文本 / 摘要        |
-| `pl fetch <url> [...curl 风格选项]`                                  | 页面上下文网络请求                            | 状态码 + 体摘要    |
-| `pl search <query> [--engine google\|duckduckgo] [--page N]`         | 搜索引擎结果（默认 google，--page 翻页）      | 结果列表           |
-| `pl tabs` / `pl tab <id>` / `pl tab-new <url>` / `pl tab-close [id]` | 标签页列表 / 切换 / 新建 / 关闭               | 列表 / context     |
-| `pl wait [--ms N                                                     | --selector css                                | --condition load]` | 等待时间/元素/加载条件 | context  |
-| `pl session list/new/use/close/mode`                                 | session 管理（mode: auto/ask）                | 列表/摘要          |
-| `pl logs [--follow] [--since]`                                       | 命令账本                                      | JSON lines         |
-| `pl approve <id>` / `pl deny <id>`                                   | HITL 远程批准（也可在 popup 操作）            | 状态               |
+| `plt status` / `plt ping`                                              | 扩展在线？server 版本                         | text 摘要          |
+| `plt goto <url>`                                                      | 导航（无 session 自动创建）                   | context 快照       |
+| `plt back / forward / reload`                                         | 历史导航                                      | context            |
+| `plt click <selector>` / `plt click-text <text>`                       | 点击                                          | ElementInfo        |
+| `plt fill <selector> <value>` / `plt type <sel> <text>`                | 输入                                          | ElementInfo        |
+| `plt press <key>` / `plt hover <sel>` / `plt select <sel> <value>`      | 交互                                          | ElementInfo        |
+| `plt scroll [up                                                       | down                                          | top                | bottom                 | amount]` | 滚动 | 视口摘要 |
+| `plt screenshot [--path x.png] [--full]`                              | 截图（默认 base64 输出长度摘要 + 可选写文件） | 摘要               |
+| `plt extract` / `plt page-info`                                        | 页面可读文本（`--limit` 裁剪）/ 页面信息      | 文本 / 摘要        |
+| `plt fetch <url> [...curl 风格选项]`                                  | 页面上下文网络请求                            | 状态码 + 体摘要    |
+| `plt search <query> [--engine google\|duckduckgo] [--page N]`         | 搜索引擎结果（默认 google，--page 翻页）      | 结果列表           |
+| `plt tabs` / `plt tab <id>` / `plt tab-new <url>` / `plt tab-close [id]` | 标签页列表 / 切换 / 新建 / 关闭               | 列表 / context     |
+| `plt wait [--ms N                                                     | --selector css                                | --condition load]` | 等待时间/元素/加载条件 | context  |
+| `plt session list/new/use/close/mode`                                 | session 管理（mode: auto/ask）                | 列表/摘要          |
+| `plt logs [--follow] [--since]`                                       | 命令账本                                      | JSON lines         |
+| `plt approve <id>` / `plt deny <id>`                                   | HITL 远程批准（也可在 popup 操作）            | 状态               |
 
 - 默认 markdown 输出（便于 Agent 阅读）；`--json` 输出结构化结果（含 `context`）便于程序消费。
 - 每个命令退出码：0 成功；2 参数错误；3 目标/会话错误；4 扩展离线；5 审批未决/被拒；1 其他。
@@ -304,7 +304,7 @@ HTTP 每次请求用独立随机 id；无鉴权（仅回环），文档注明风
 ### 3.7 命令账本（流量监控）
 
 - 每次命令（含 HITL 决策）记一行 JSON：`{ ts, id, method, params(截断敏感字段), result/error, durationMs, sessionId, tabId }`。
-- 写 `~/.parkinglot/ledger.jsonl`；`pl logs --follow` 实时 tail。
+- 写 `~/.parkinglot/ledger.jsonl`；`plt logs --follow` 实时 tail。
 - 敏感字段（cookie/密码等）默认脱敏：记录键名不记值，`body` 截断到 256B。
 - v1 监控范围 = 命令级；页面发出的网络请求不做逐条拦截（留 `Network.*` 扩展点）。
 
@@ -417,23 +417,23 @@ metadata: 名称、适用场景（需要浏览器操作时）、触发词
 ## 7. LLM 使用示例（工作流模板）
 
 ```
-$ pl search "parkinglot browser extension"          # → 结果列表 [1..n]
-$ pl goto https://github.com/xxx/parkinglot          # → context{url,title,navId=1}
-$ pl extract                                         # → 页面可读文本
-$ pl click-text "Installation"                       # → ElementInfo
-$ pl scroll down                                     # → 视口摘要
-$ pl screenshot --path docs/example.png              # → 已写入文件
-$ pl fetch https://api.github.com/repos/xxx --json   # → 页面上下文请求（带登录态）
-$ pl tabs                                            # → 多 tab 时显式切换
+$ plt search "parkinglot browser extension"          # → 结果列表 [1..n]
+$ plt goto https://github.com/xxx/parkinglot          # → context{url,title,navId=1}
+$ plt extract                                         # → 页面可读文本
+$ plt click-text "Installation"                       # → ElementInfo
+$ plt scroll down                                     # → 视口摘要
+$ plt screenshot --path docs/example.png              # → 已写入文件
+$ plt fetch https://api.github.com/repos/xxx --json   # → 页面上下文请求（带登录态）
+$ plt tabs                                            # → 多 tab 时显式切换
 ```
 
 Session 连续性：
 
 ```
-$ pl goto https://example.com          # 自动创建 session S1, navId=1
-$ pl click-text "Login"                # 默认 S1 → context 仍是 example.com
-$ pl goto https://other.com            # S1 内导航 → navId=2, url=other.com ← Agent 立刻感知
-$ pl session list / use S1 / close S1  # 显式管理
+$ plt goto https://example.com          # 自动创建 session S1, navId=1
+$ plt click-text "Login"                # 默认 S1 → context 仍是 example.com
+$ plt goto https://other.com            # S1 内导航 → navId=2, url=other.com ← Agent 立刻感知
+$ plt session list / use S1 / close S1  # 显式管理
 ```
 
 ---
@@ -461,7 +461,7 @@ $ pl session list / use S1 / close S1  # 显式管理
 - WS server：鉴权/注册/心跳/离线检测
 - SessionRegistry + state file 持久化；命令寻址优先级解析；context 快照缓存
 - Router：校验 → 转发 → 超时（30s）→ 错误映射
-- 命令账本：JSON lines + 脱敏；`pl logs --follow`
+- 命令账本：JSON lines + 脱敏；`plt logs --follow`
 - HITL：pending 队列、approve/deny、写/只读分类、超时失败
 - CLI 全集（2.4 表 + session/logs/approve 管理命令），markdown/`--json` 输出
 - HTTP 端点：`/api/status`、`/api/command`、`/api/approve/:id`
@@ -487,7 +487,7 @@ $ pl session list / use S1 / close S1  # 显式管理
 2. 扩展可在 Chrome 加载，popup 显示连接成功
 3. 以下 CLI 命令对真实页面端到端可用：`status/goto/extract/click-text/fill/scroll/screenshot/tabs/session/fetch/search`
 4. session 连续性验证通过（同 session 两次命令 context 一致，导航后 navId 递增且 url 变化）
-5. `pl logs --follow` 能实时看到命令账本且敏感字段脱敏
+5. `plt logs --follow` 能实时看到命令账本且敏感字段脱敏
 6. HITL：`ask` 模式下写操作挂起 → popup 批准 → 执行；拒绝/超时路径正确
 7. `eval` 默认禁用且尝试调用返回 `EVAL_DISABLED`
 

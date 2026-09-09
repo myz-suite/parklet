@@ -69,9 +69,9 @@ Optional addressing fields in command `params`, in priority order:
 CLI-side session mental model:
 
 ```
-pl goto <url>          # no session → auto-created and remembered; response carries sessionId/tabId/context
-pl click "Submit"      # acts on the last session by default
-pl session list|use|new|close
+plt goto <url>          # no session → auto-created and remembered; response carries sessionId/tabId/context
+plt click "Submit"      # acts on the last session by default
+plt session list|use|new|close
 ```
 
 ## Command Set

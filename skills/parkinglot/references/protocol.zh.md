@@ -69,9 +69,9 @@
 CLI 侧 session 心智模型：
 
 ```
-pl goto <url>          # 无 session → 自动创建并记住；响应带 sessionId/tabId/context
-pl click "Submit"      # 默认作用于上次 session
-pl session list|use|new|close
+plt goto <url>          # 无 session → 自动创建并记住；响应带 sessionId/tabId/context
+plt click "Submit"      # 默认作用于上次 session
+plt session list|use|new|close
 ```
 
 ## 命令全集

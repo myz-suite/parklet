@@ -5,7 +5,7 @@
 ParkingLot — Agent-controlled browser infrastructure. An AI agent drives a real Chrome browser by sending commands through a local relay daemon to a browser extension.
 
 ```
-Agent ── CLI (pl) / HTTP ──▶ parkinglot-server (relay) ── WebSocket ──▶ parkinglot-extension (Chrome MV3) ──▶ pages
+Agent ── CLI (plt) / HTTP ──▶ parkinglot-server (relay) ── WebSocket ──▶ parkinglot-extension (Chrome MV3) ──▶ pages
 ```
 
 Authoritative design: `docs/initial-plan.md` (protocol, command set, session/tab/navId continuity model, HITL, security, acceptance criteria).
@@ -43,6 +43,6 @@ pnpm format         # prettier --write .
 
 All 5 phases of `docs/initial-plan.md` are complete: workspace skeleton → protocol layer → parkinglot-server (relay/CLI/HITL/ledger) → parkinglot-extension (MV3) → parkinglot skill + E2E smoke. Everything is green (typecheck/test/build/lint/format; 102 tests).
 
-To run the system end-to-end: `pnpm --filter @parkinglot/server start` → build & load the extension from `packages/extension/dist` in Chrome → pair it in the popup → use `pl <command>` (see `parkinglot` skill; protocol reference: `skills/parkinglot/references/protocol.md`).
+To run the system end-to-end: `pnpm --filter @parkinglot/server start` → build & load the extension from `packages/extension/dist` in Chrome → pair it in the popup → use `plt <command>` (see `parkinglot` skill; protocol reference: `skills/parkinglot/references/protocol.md`).
 
 Keep-alive: SW holds the WS connection; `chrome.alarms` (0.5 min) wakes the SW to reconnect when Chrome reclaims it. Verified on real Chrome (stays online after 85s+70s idle). Stronger fallback if ever needed: move the WebSocket to an offscreen document.

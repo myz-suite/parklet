@@ -33,7 +33,7 @@ ParkingLot 扩展的定位：**配套组件**——需要配合用户本机运�
 | 分类 Category      | 单选                                                       | [ ]  | 建议 **Developer Tools**（另可选 "Productivity"）                                         |
 | 语言 Language      | 单选                                                       | [ ]  | English（zh 版本描述后续可加）                                                            |
 | 图标 icon          | **128×128 PNG**（方形）                                    | [ ]  | 需要设计一个 "🅿 ParkingLot" 主题图标；不可含商店外品牌/商标                               |
-| 主截图 Screenshots | **至少 1 张**，最多 5 张；建议 1280×800 或 640×400 PNG/JPG | [ ]  | 用真实运行画面：popup 连接态、CLI 会话、浏览器操作示例（可用 `pl screenshot` 截取演示页） |
+| 主截图 Screenshots | **至少 1 张**，最多 5 张；建议 1280×800 或 640×400 PNG/JPG | [ ]  | 用真实运行画面：popup 连接态、CLI 会话、浏览器操作示例（可用 `plt screenshot` 截取演示页） |
 | 开发者邮箱         | 账号注册邮箱                                               | [ ]  | 用于商店联系；建议建 `support@<你的域名>` 并置入隐私政策                                  |
 | 隐私政策 URL       | 需可公开访问的页面                                         | [ ]  | 无官网时可先用 GitHub Pages / gist 托管；内容模板见 §5.3                                  |
 
@@ -48,7 +48,7 @@ ParkingLot 扩展的定位：**配套组件**——需要配合用户本机运�
 
 ### 2.3 内容素材生成建议
 
-- 截图素材可用本仓库 `pl screenshot` 能力产出真实画面；
+- 截图素材可用本仓库 `plt screenshot` 能力产出真实画面；
 - 建议一个演示流程脚本（存 `scripts/demo.sh`）：`goto → extract → click-text → scroll → screenshot`，方便每次发版前重截图。
 
 ---
@@ -136,7 +136,7 @@ What it does
 How it works
 - Install this extension and pair it with a local parkinglot-server (run with
   Node.js on your own computer, pnpm --filter @parkinglot/server start)
-- Control it with the pl CLI or the /api HTTP endpoints
+- Control it with the plt CLI or the /api HTTP endpoints
 - Every response carries a page context snapshot (url/title/navId), so an agent
   can always tell whether the page changed
 
@@ -152,7 +152,7 @@ Privacy & security
 Getting started
 1. Start the relay: pnpm --filter @parkinglot/server start
 2. Load dist/ unpacked, or install this package and pair the token in the popup
-3. pl status → connected; pl goto <url>; pl extract; ...
+3. plt status → connected; plt goto <url>; plt extract; ...
 
 Full protocol & CLI reference: repository README (docs/protocol.md).
 ```
@@ -192,7 +192,7 @@ Full protocol & CLI reference: repository README (docs/protocol.md).
 
 1. Chrome 开发者账号注册（US$5）与验证
 2. 128×128 图标设计（可给 AI 出图或外包）
-3. 主截图 1–5 张（可用仓库 `pl screenshot` 产出演示画面）
+3. 主截图 1–5 张（可用仓库 `plt screenshot` 产出演示画面）
 4. 隐私政策托管 URL + 支持邮箱（建议 `support@` 你的域名）
 5. 首次发布走"受信任测试者"或直接公开的决策
 6. 商店名/开发者主体落款

@@ -156,7 +156,7 @@ export class SessionRegistry {
 
     throw new ParkinglotError(
       'EXTENSION_NO_TAB',
-      'no tab targeted: run `pl goto <url>` to create a session, or pass --session/--tab',
+      'no tab targeted: run `plt goto <url>` to create a session, or pass --session/--tab',
     );
   }
 }

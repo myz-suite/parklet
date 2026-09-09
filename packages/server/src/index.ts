@@ -74,5 +74,5 @@ if (isMain) {
   console.log(`${SERVER_NAME} listening on ${server.url}`);
   console.log(`extension websocket: ${server.wsPath}`);
   console.log(`pair token: ${server.token}`);
-  console.log('load the extension and connect it with this token; then use `pl status`.');
+  console.log('load the extension and connect it with this token; then use `plt status`.');
 }

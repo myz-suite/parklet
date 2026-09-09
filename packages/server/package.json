@@ -28,7 +28,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "pl": "./dist/cli.js"
+    "plt": "./dist/cli.js"
   },
   "exports": {
     ".": {
