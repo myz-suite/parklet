@@ -1,4 +1,4 @@
-# ParkingLot 协议参考（v0.1.0）
+# ParkingLot 协议参考（v0.2.0）
 
 > 权威命令参考，供 `parkinglot` skill 与两端实现引用。
 > 归属：`skills/parkinglot/references/protocol.zh.md`（本文件为中文版；**英文版见同目录 `protocol.md`**，`docs/protocol.md` 是指向英文版的符号链接）。

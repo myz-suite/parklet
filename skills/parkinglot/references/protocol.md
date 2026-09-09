@@ -1,4 +1,4 @@
-# ParkingLot Protocol Reference (v0.1.0)
+# ParkingLot Protocol Reference (v0.2.0)
 
 > Authoritative command reference for the `parkinglot` skill and both ends of the implementation.
 > Location: `skills/parkinglot/references/protocol.md` (`docs/protocol.md` is a symlink to this file). A Chinese version is available at `protocol.zh.md`.

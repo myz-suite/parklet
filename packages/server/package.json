@@ -1,6 +1,6 @@
 {
   "name": "@parkinglot/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "ParkingLot relay daemon: WebSocket server for the extension, CLI + HTTP for the agent, session registry, HITL, command ledger.",
   "license": "MIT",
   "keywords": [
