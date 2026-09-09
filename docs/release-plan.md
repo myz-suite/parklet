@@ -1,7 +1,7 @@
 # ParkingLot — Chrome Web Store 发布计划（release-plan）
 
 > 目的：把 `parkinglot-extension` 作为 Chrome 扩展发布到 Chrome Web Store（CWS）前，需要完成的工作与准备素材清单。
-> 适用：仓库根 `packages/extension`。当前 manifest 版本：`0.2.0`（`manifest.json`）。
+> 适用：仓库根 `packages/extension`。当前 manifest 版本：`0.1.0`（`manifest.json`）。
 
 发布前请确认：**本清单不涉及功能开发**——默认扩展功能已稳定（真实 Chrome 端到端验证通过）。以下全部是商店上架的工作项。
 

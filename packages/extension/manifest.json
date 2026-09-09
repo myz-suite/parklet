@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ParkingLot",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "minimum_chrome_version": "120",
   "description": "ParkingLot: drive real Chrome pages via a local relay — goto, click, type, extract, screenshot, search.",
   "permissions": ["tabs", "scripting", "webNavigation", "storage", "alarms"],
