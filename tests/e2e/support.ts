@@ -133,16 +133,46 @@ export async function waitForExtensionOnline(serverUrl: string, timeoutMs: numbe
   }
 }
 
-/** 本地测试页：提供 /（含 "Learn more" 链接指向 /target-page）与 /target-page。 */
+/** 本地测试页：承载 /、/target-page、/form、/api/echo、/tall，供 E2E 稳定交互。 */
 export async function startTestWeb(): Promise<{ url: string; stop: () => void }> {
   const server = createServer((req, res) => {
-    if (req.url === '/target-page') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end('<html><body><h1>target-page</h1></body></html>');
+    const send = (body: string, type = 'text/html; charset=utf-8') => {
+      res.writeHead(200, { 'content-type': type });
+      res.end(body);
+    };
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+
+    if (url.pathname === '/target-page') {
+      send('<html><body><h1>target-page</h1></body></html>');
       return;
     }
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(
+    if (url.pathname === '/form') {
+      send(
+        '<html><body><h1>login-form</h1>' +
+          '<form method="get" action="/submitted">' +
+          '<input id="name" name="name" value="">' +
+          '<button id="submit" type="submit">Submit form</button>' +
+          '</form></body></html>',
+      );
+      return;
+    }
+    if (url.pathname === '/submitted') {
+      const name = url.searchParams.get('name') ?? '';
+      send(`<html><body><h1>submitted</h1><p id="greeting">hello ${name}</p></body></html>`);
+      return;
+    }
+    if (url.pathname === '/api/echo') {
+      send(JSON.stringify({ ok: true, path: url.pathname, query: Object.fromEntries(url.searchParams) }), 'application/json');
+      return;
+    }
+    if (url.pathname === '/tall') {
+      // 足够高以便 scroll
+      send(
+        `<html><body><h1>tall-page</h1>${'<p style="height:40px">line</p>'.repeat(80)}<footer>the-end</footer></body></html>`,
+      );
+      return;
+    }
+    send(
       '<html><body><h1>test home</h1><a href="/target-page">Learn more</a></body></html>',
     );
   });

@@ -126,3 +126,183 @@ test('点击可见文本可真实导航（navId 递增）', async ({ session }) 
     web.stop();
   }
 });
+
+// ---------------------------------------------------------------------------
+// server HTTP 管理面 helper（session mode / approval）
+// ---------------------------------------------------------------------------
+
+async function sessionMode(
+  serverUrl: string,
+  sessionId: string,
+  mode: 'auto' | 'ask',
+): Promise<void> {
+  const res = await fetch(`${serverUrl}/api/session`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'mode', id: sessionId, mode }),
+  });
+  const body = (await res.json()) as { ok?: boolean };
+  if (!body.ok) throw new Error(`session mode ${mode} failed for ${sessionId}`);
+}
+
+async function firstPendingRequestId(serverUrl: string, timeoutMs = 8_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await fetch(`${serverUrl}/api/status`);
+    const status = (await res.json()) as {
+      pendingApprovals?: Array<{ requestId?: string }>;
+    };
+    const id = status.pendingApprovals?.[0]?.requestId;
+    if (id) return id;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error('no pending approval appeared');
+}
+
+async function respondApproval(
+  serverUrl: string,
+  requestId: string,
+  approve: boolean,
+): Promise<void> {
+  const res = await fetch(`${serverUrl}/api/approve/${encodeURIComponent(requestId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ approve }),
+  });
+  const body = (await res.json()) as { ok?: boolean };
+  if (!body.ok) throw new Error(`approve ${requestId}=${approve} failed`);
+}
+
+// ---------------------------------------------------------------------------
+// 用例（核心回归 + 补充）
+// ---------------------------------------------------------------------------
+
+test('SW 保活：空闲超过回收阈值后仍在线（alarms 唤醒重连）', async ({ session }) => {
+  test.setTimeout(150_000);
+  const ping1 = (await command(session.serverUrl, 'ping', {})) as {
+    data?: { extensionConnected?: boolean };
+  };
+  expect(ping1.data?.extensionConnected).toBe(true);
+  // 超过 MV3 ~30s 回收阈值 + alarms 30s 周期：SW 被回收后由 alarms 唤醒重连
+  await new Promise((r) => setTimeout(r, 75_000));
+  const ping2 = (await command(session.serverUrl, 'ping', {})) as {
+    data?: { extensionConnected?: boolean };
+  };
+  expect(ping2.data?.extensionConnected).toBe(true);
+});
+
+test('HITL：ask 模式写操作挂起，approve 执行 / deny 拒绝', async ({ session }) => {
+  const base = session.serverUrl;
+  // 先建默认 session 并切 ask
+  const seed = (await command(base, 'goto', { url: 'https://example.com' })) as {
+    sessionId?: string;
+  };
+  await session.page.waitForURL('https://example.com/**', { timeout: 20_000 });
+  expect(seed.sessionId).toMatch(/^pl-/);
+  await sessionMode(base, seed.sessionId!, 'ask');
+
+  // —— approve 路径：click 挂起（不带 tabId，走 ask session）→ 批准 → 执行成功
+  const clickPromise = command(base, 'click-text', { text: 'Learn more' });
+  const requestId = await firstPendingRequestId(base);
+  expect(requestId).toMatch(/^ap-/);
+  await respondApproval(base, requestId, true);
+  const clickRes = (await clickPromise) as { data?: { element?: { tag?: string } } };
+  expect(clickRes.data?.element?.tag).toBe('a');
+
+  // —— deny 路径：再发起写操作 → 拒绝 → APPROVAL_DENIED
+  const goto2Promise = command(base, 'goto', { url: 'https://example.com/blocked' });
+  const requestId2 = await firstPendingRequestId(base);
+  await respondApproval(base, requestId2, false);
+  await expect(goto2Promise).rejects.toThrow(/APPROVAL_DENIED/);
+});
+
+test('截图返回 base64 PNG 数据', async ({ session }) => {
+  const shot = (await command(
+    session.serverUrl,
+    'screenshot',
+    {},
+    { tabId: session.tabId },
+  )) as { data?: { data?: string } };
+  expect(shot.data?.data).toBeDefined();
+  // PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A
+  expect(Buffer.from(shot.data!.data!, 'base64').subarray(0, 8).toString('hex')).toBe(
+    '89504e470d0a1a0a',
+  );
+});
+
+test('fill + 点击提交：表单真实提交（受控输入事件链路）', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/form` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/form`, { timeout: 20_000 });
+
+    await command(
+      session.serverUrl,
+      'fill',
+      { selector: '#name', value: 'alice' },
+      { tabId: session.tabId },
+    );
+    const val = await session.page.$eval('#name', (el) => (el as HTMLInputElement).value);
+    expect(val).toBe('alice');
+
+    await command(
+      session.serverUrl,
+      'click-text',
+      { text: 'Submit form' },
+      { tabId: session.tabId },
+    );
+    await session.page.waitForURL(`${web.url}/submitted?name=alice`, { timeout: 20_000 });
+    const greeting = await session.page.textContent('#greeting');
+    expect(greeting).toBe('hello alice');
+  } finally {
+    web.stop();
+  }
+});
+
+test('页面上下文 fetch：本地 API 请求返回真实响应', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'fetch',
+      { url: `${web.url}/api/echo?x=1&y=two` },
+      { tabId: session.tabId },
+    )) as { data?: { status?: number; body?: string } };
+    expect(res.data?.status).toBe(200);
+    const parsed = JSON.parse(res.data?.body ?? '{}') as {
+      ok?: boolean;
+      query?: Record<string, string>;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.query?.x).toBe('1');
+    expect(parsed.query?.y).toBe('two');
+  } finally {
+    web.stop();
+  }
+});
+
+test('scroll：滚动后 scrollY 真实变化', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/tall` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/tall`, { timeout: 20_000 });
+    await command(
+      session.serverUrl,
+      'scroll',
+      { direction: 'bottom' },
+      { tabId: session.tabId },
+    );
+    await new Promise((r) => setTimeout(r, 900)); // smooth 滚动落定
+    const info = (await command(
+      session.serverUrl,
+      'get-page-info',
+      {},
+      { tabId: session.tabId },
+    )) as { data?: { scrollY?: number } };
+    expect(info.data?.scrollY).toBeGreaterThan(100);
+  } finally {
+    web.stop();
+  }
+});
