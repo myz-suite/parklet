@@ -13,4 +13,11 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
+  {
+    // Playwright fixture 要求空解构参数（async ({}, use)），tests 目录放行空对象模式
+    files: ['tests/**/*.ts'],
+    rules: {
+      'no-empty-pattern': 'off',
+    },
+  },
 );

@@ -206,12 +206,13 @@ plt fetch https://api.github.com/user --header "Accept: application/json"
 ```bash
 pnpm install          # 安装依赖
 pnpm typecheck        # tsc --noEmit（三包）
-pnpm test             # vitest（102 个用例）
+pnpm test             # vitest 单测（108 个用例）
+pnpm test:e2e         # Playwright E2E（需先 pnpm exec playwright install chromium；加载真实扩展跑配对/导航/连续性）
 pnpm build            # 编译 dist（server/protocol）+ esbuild 打包扩展
 pnpm lint / pnpm format
 ```
 
-代码约定：TypeScript strict + ESM、vitest 测试与源码同目录（`src/*.test.ts`）、Conventional Commits。详见 `AGENTS.md`。
+代码约定：TypeScript strict + ESM、vitest 测试与源码同目录（`src/*.test.ts`）、Conventional Commits。E2E 位于 `tests/e2e/`（`playwright.config.ts`；用 Playwright 捆绑 Chromium 加载扩展 + storage 自动配对，headless 可跑）。详见 `AGENTS.md`。
 
 ## 文档
 

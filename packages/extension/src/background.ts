@@ -414,6 +414,21 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// 自动配对：chrome.storage.local 的 serverUrl/token 一写入即触发连接。
+// popup 的 Save & Connect 与自动化（E2E/Playwright 经 SW 注入配置）共用此入口。
+// ---------------------------------------------------------------------------
+try {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (changes.serverUrl !== undefined || changes.token !== undefined) {
+      void connect();
+    }
+  });
+} catch (err) {
+  console.error('[parkinglot] storage hook unavailable:', err);
+}
+
+// ---------------------------------------------------------------------------
 // popup 消息
 // ---------------------------------------------------------------------------
 

@@ -18,6 +18,8 @@ dist/
 
 # Test / coverage
 coverage/
+test-results/
+playwright-report/
 # Chrome packed extension artifacts
 *.crx
 *.pem

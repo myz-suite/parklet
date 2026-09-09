@@ -26,6 +26,7 @@ Project skills (already installed): `.agents/skills/` — bootstrapping, probing
 pnpm install        # install workspace deps (pnpm >= 9; builds gated via allowBuilds in pnpm-workspace.yaml)
 pnpm typecheck      # tsc --noEmit across packages
 pnpm test           # vitest run across packages
+pnpm test:e2e       # Playwright E2E (tests/e2e): real extension via bundled Chromium + storage auto-pair; needs `pnpm exec playwright install chromium`
 pnpm build          # tsc emit to packages/*/dist
 pnpm lint           # eslint . (flat config)
 pnpm format         # prettier --write .
