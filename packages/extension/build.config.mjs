@@ -41,4 +41,8 @@ for (const file of ['manifest.json', 'popup.html', 'popup.css']) {
   copyFileSync(join(root, file), join(outdir, file));
 }
 
+// 图标（manifest icons 指向 icons/icon128.png；仅发布 png，源 svg 留 assets/）
+mkdirSync(join(outdir, 'icons'), { recursive: true });
+copyFileSync(join(root, 'assets', 'icon128.png'), join(outdir, 'icons', 'icon128.png'));
+
 console.log('extension build: done →', outdir);

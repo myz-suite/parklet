@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- material 风格：圆角方形底座 + 顶部柔和高光 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4d8ef7"/>
+      <stop offset="1" stop-color="#1a6de0"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="26" fill="url(#bg)"/>
+  <!-- 停车标识 P：粗白字形（Google 地图/停车场 P 的通用形态） -->
+  <text x="64" y="66" font-family="Arial, 'Helvetica Neue', sans-serif" font-size="82" font-weight="800"
+        fill="#ffffff" text-anchor="middle" dominant-baseline="central">P</text>
+  <!-- 底部反光提示，增强质感 -->
+  <rect x="28" y="98" width="72" height="6" rx="3" fill="#ffffff" opacity="0.18"/>
+</svg>
