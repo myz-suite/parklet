@@ -8,6 +8,7 @@ import {
   type ProtocolError,
   type Response,
 } from '@parkinglot/protocol';
+import { startServer } from './index.js';
 
 interface GlobalOpts {
   server: string;
@@ -571,6 +572,30 @@ export function buildProgram(): Command {
     (c) =>
       c.option('--ms <n>').option('--selector <css>').option('--condition <c>', 'networkidle|load'),
   );
+
+  // 启动 relay server（npm -g 安装后的便捷入口）
+  program
+    .command('serve')
+    .description('run the parkinglot relay server (blocks; default http://127.0.0.1:8787)')
+    .option('--port <n>', 'listen port')
+    .option('--token <t>', 'pairing token (default: persisted auto-generated)')
+    .action(async function (this: Command) {
+      const opts = this.opts() as { port?: string; token?: string };
+      const overrides: Partial<Parameters<typeof startServer>[0]> = {};
+      if (opts.port !== undefined) overrides.port = Number(opts.port);
+      if (opts.token !== undefined) overrides.token = opts.token;
+      const running = await startServer(overrides);
+      console.log(`parkinglot-server listening on ${running.url}`);
+      console.log(`extension websocket: ${running.wsPath}`);
+      console.log(`pair token: ${running.token}`);
+      console.log('load the extension, pair it with this token, then use `plt status`; Ctrl-C to stop.');
+      const shutdown = async (): Promise<void> => {
+        await running.close();
+        process.exit(0);
+      };
+      process.on('SIGINT', () => void shutdown());
+      process.on('SIGTERM', () => void shutdown());
+    });
 
   // 会话管理（server 本地操作）
   program
