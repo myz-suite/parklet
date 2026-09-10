@@ -13,12 +13,11 @@ Agent ── plt <command> ──▶ parkinglot-server (ws://127.0.0.1:8787) ─
 
 ## 1. Prerequisites (one-time)
 
-1. Start the relay: `pnpm --filter @parkinglot/server start` (node ≥ 20). Note the printed **pair token** and ws path (`ws://127.0.0.1:8787/ws`).
-2. Build and load the extension in Chrome:
-   - `pnpm build` → `packages/extension/dist/`
-   - Open `chrome://extensions`, enable **Developer mode**, **Load unpacked** → `packages/extension/dist`.
-   - Open the extension popup, enter the server URL and token, **Save & Connect**. Wait for the green status dot.
+1. Install & run the relay: `npm install -g @parkinglot/server`, then `plt serve` (node ≥ 20). Note the printed **pair token** and ws path (`ws://127.0.0.1:8787/ws`).
+2. Install the extension from the Chrome Web Store (<https://chromewebstore.google.com/detail/ajpkphgdonekdpifjhfffffjhikiafdj>), open its popup, enter the server URL and token, **Save & Connect** — wait for green **Connected ✓**.
 3. Verify: `plt status` → `extension: connected ✅`.
+
+Dev/from source: `pnpm install && pnpm build` → `pnpm --filter @parkinglot/server start`, and load `packages/extension/dist` unpacked (chrome://extensions → Developer mode → Load unpacked).
 
 Config via env (defaults safe): `PARKINGLOT_PORT=8787`, `PARKINGLOT_BIND=127.0.0.1`, `PARKINGLOT_TOKEN`, `PARKINGLOT_ALLOWED_HOSTS` (comma list), `PARKINGLOT_ENABLE_EVAL=1` (off by default).
 

@@ -42,8 +42,8 @@ pnpm format         # prettier --write .
 
 ## Current status
 
-All 5 phases of `docs/initial-plan.md` are complete: workspace skeleton → protocol layer → parkinglot-server (relay/CLI/HITL/ledger) → parkinglot-extension (MV3) → parkinglot skill + E2E smoke. Everything is green (typecheck/test/build/lint/format; 102 tests).
+All 5 phases of `docs/initial-plan.md` are complete: workspace skeleton → protocol layer → parkinglot-server (relay/CLI/HITL/ledger) → parkinglot-extension (MV3) → parkinglot skill + E2E smoke. Everything is green (typecheck/test/build/lint/format; 108 unit tests + 10 E2E).
 
-To run the system end-to-end: `pnpm --filter @parkinglot/server start` → build & load the extension from `packages/extension/dist` in Chrome → pair it in the popup → use `plt <command>` (see `parkinglot` skill; protocol reference: `skills/parkinglot/references/protocol.md`).
+To run the system end-to-end: `npm install -g @parkinglot/server` → `plt serve` → install the extension from the Chrome Web Store and pair it in the popup → use `plt <command>` (see `parkinglot` skill; protocol reference: `skills/parkinglot/references/protocol.md`). Agent side: `npx skills add myz-suite/parkinglot --skill parkinglot`. From source: `pnpm install && pnpm build` → `pnpm --filter @parkinglot/server start` + load `packages/extension/dist` unpacked.
 
 Keep-alive: SW holds the WS connection; `chrome.alarms` (0.5 min) wakes the SW to reconnect when Chrome reclaims it. Verified on real Chrome (stays online after 85s+70s idle). Stronger fallback if ever needed: move the WebSocket to an offscreen document.

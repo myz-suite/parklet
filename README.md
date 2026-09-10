@@ -29,19 +29,18 @@
 
 ## 前置条件
 
-- Node.js ≥ 20、pnpm ≥ 9（用 `pnpm --filter @parkinglot/server start` 启动 server）
-- Chrome / Chromium ≥ 137（运行扩展；137+ 需用开发者模式加载，见下）
+- Node.js ≥ 20（运行 server，`npm install -g @parkinglot/server` 安装）
+- Chrome / Chromium ≥ 120（运行扩展，从 Chrome Web Store 安装）
 
 ## 完整使用指南
 
-### 第 1 步：构建并启动 server
+### 第 1 步：安装并启动 server
 
 ```bash
-pnpm install          # 安装依赖
-pnpm build            # 编译三个包 → packages/*/dist
+npm install -g @parkinglot/server
 
 # 启动 relay（阻塞前台；另开终端做后续操作）
-pnpm --filter @parkinglot/server start
+plt serve
 ```
 
 启动输出类似：
@@ -52,16 +51,17 @@ extension websocket: ws://127.0.0.1:8787/ws
 pair token: e59fd1316be7aa2fb839fd016fbe1b0b589ce08ee6af2db3
 ```
 
-记下 **pair token**。token 持久化在 state 目录（默认 `~/.parkinglot/token`），重启 server 不变，Chrome 侧配对一次即可。
+记下 **pair token**。token 持久化在 state 目录（默认 `~/.parkinglot/token`），重启 server 不变，Chrome 侧配对一次即可（可用 `plt serve --token <自定义>` 覆盖）。
 
-### 第 2 步：在 Chrome 中加载扩展
+> 贡献者/源码方式：`pnpm install && pnpm build` 后 `pnpm --filter @parkinglot/server start`（等价于 `plt serve`）。
 
-> Chrome 137+ 已移除 `--load-extension` 命令行参数，必须用开发者模式手动加载。
+### 第 2 步：安装扩展
 
-1. 打开 `chrome://extensions`；
-2. 打开右上角 **开发者模式**；
-3. 点 **加载已解压的扩展程序**，选择 `packages/extension/dist`；
-4. 列表中出现 **ParkingLot**。
+从 Chrome Web Store 安装：
+
+<https://chromewebstore.google.com/detail/ajpkphgdonekdpifjhfffffjhikiafdj>
+
+> 开发/调试可用源码方式：`chrome://extensions` → 开发者模式 → **加载已解压的扩展程序** → `packages/extension/dist`（Chrome 137+ 已移除 `--load-extension` 命令行参数，只能这样加载）。
 
 ### 第 3 步：配对（一次性）
 
@@ -71,7 +71,16 @@ pair token: e59fd1316be7aa2fb839fd016fbe1b0b589ce08ee6af2db3
 
 配对信息保存在扩展的 `chrome.storage`，Chrome 重启后扩展会自动重连，无需重复操作。
 
-### 第 4 步：验证连接
+### 第 4 步：Agent 侧安装 parkinglot skill（可选）
+
+让 AI Agent 按标准工作流驱动浏览器：
+
+```bash
+npx skills add myz-suite/parkinglot --skill parkinglot
+```
+
+
+### 第 5 步：验证连接
 
 ```bash
 plt status
@@ -79,9 +88,9 @@ plt status
 # sessions: 0
 ```
 
-> `plt` 是 `packages/server/dist/cli.js`。仓库内可直接 `node packages/server/dist/cli.js status`，或 `pnpm --filter @parkinglot/server exec` 链接后的全局 `plt` 命令。
+> `plt` 随 `@parkinglot/server` 一起安装为全局命令。源码方式可用 `node packages/server/dist/cli.js status`。
 
-### 第 5 步：控制浏览器
+### 第 6 步：控制浏览器
 
 ```bash
 plt goto https://example.com    # 首次自动创建 session；响应带 context 快照
