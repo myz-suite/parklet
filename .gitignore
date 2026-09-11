@@ -24,3 +24,5 @@ playwright-report/
 *.crx
 *.pem
 *.zip
+
+.plt-state/
