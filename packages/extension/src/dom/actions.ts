@@ -1,5 +1,5 @@
 import { findByCss, locate, toElementInfo, type Located } from './locator.js';
-import { buildPageSnapshot, getScrollY, getViewport } from './snapshot.js';
+import { extractPage, getScrollY, getViewport, type ExtractOptions } from './snapshot.js';
 import type { ElementInfo, SearchResult } from '@parkinglot/protocol';
 
 /** DOM 层命令执行器：在页面上下文执行单个命令并返回命令特有结果。 */
@@ -16,6 +16,133 @@ function withElement(
 
 function fire(el: Element, type: string): void {
   el.dispatchEvent(new Event(type, { bubbles: true }));
+}
+
+function fail(code: string, message: string): never {
+  throw Object.assign(new Error(message), { code });
+}
+
+const INPUT_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+
+function isEditable(el: Element | null): el is HTMLElement {
+  if (el === null) return false;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+  const ce = el.getAttribute('contenteditable');
+  return ce !== null && ce !== 'false';
+}
+
+/**
+ * 智能解析输入目标：selector 可指向真正的 input/textarea，也可指向 label/容器/相邻元素。
+ * 优先级：自身可编辑 > label[for] > 最近 label/fieldset 内唯一可编辑 > 后代唯一可编辑；
+ * 多候选且无 label[for] 精确匹配 → TARGET_AMBIGUOUS；找不到 → TARGET_NOT_FOUND。
+ */
+export function resolveInput(doc: Document, selector: string): HTMLElement {
+  const el = doc.querySelector(selector);
+  if (el === null) fail('TARGET_NOT_FOUND', `no element matches '${selector}'`);
+  if (isEditable(el)) return el;
+
+  const byFor = (scope: Element): HTMLElement | undefined => {
+    const forId = scope.getAttribute('for');
+    if (forId === null) return undefined;
+    const target = doc.getElementById(forId);
+    return isEditable(target) ? target : undefined;
+  };
+
+  // el 自身是 label：label[for] 或 label 内唯一可编辑元素
+  if (el.tagName.toLowerCase() === 'label') {
+    const viaFor = byFor(el);
+    if (viaFor !== undefined) return viaFor;
+    const inner = Array.from(el.querySelectorAll(INPUT_SELECTOR)).filter(isEditable);
+    if (inner.length === 1) return inner[0]!;
+    if (inner.length > 1) fail('TARGET_AMBIGUOUS', `label '${selector}' contains multiple inputs`);
+  }
+
+  // 最近的 label / fieldset 作用域
+  const scope = el.closest('label, fieldset');
+  if (scope !== null) {
+    const viaFor = byFor(scope);
+    if (viaFor !== undefined) return viaFor;
+    const inner = Array.from(scope.querySelectorAll(INPUT_SELECTOR)).filter(isEditable);
+    if (inner.length === 1) return inner[0]!;
+    if (inner.length > 1) {
+      fail(
+        'TARGET_AMBIGUOUS',
+        `'${selector}' resolves to multiple inputs; use a more specific selector`,
+      );
+    }
+  }
+
+  // 后代中的唯一可编辑元素
+  const descendants = Array.from(el.querySelectorAll(INPUT_SELECTOR)).filter(isEditable);
+  if (descendants.length === 1) return descendants[0]!;
+  if (descendants.length > 1) {
+    fail(
+      'TARGET_AMBIGUOUS',
+      `'${selector}' contains multiple inputs; use a more specific selector`,
+    );
+  }
+
+  return fail('TARGET_NOT_FOUND', `no input found for '${selector}'`);
+}
+
+export interface KeyCombo {
+  key: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+}
+
+/** 解析 Playwright 风格组合键，如 "Control+c" / "Meta+s" / "Shift+Tab"。 */
+export function parseKeyCombo(combo: string): KeyCombo {
+  const parts = combo
+    .split('+')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  let ctrlKey = false;
+  let shiftKey = false;
+  let altKey = false;
+  let metaKey = false;
+  let key = '';
+  for (const part of parts) {
+    switch (part.toLowerCase()) {
+      case 'control':
+      case 'ctrl':
+        ctrlKey = true;
+        break;
+      case 'shift':
+        shiftKey = true;
+        break;
+      case 'alt':
+      case 'option':
+        altKey = true;
+        break;
+      case 'meta':
+      case 'command':
+      case 'cmd':
+      case 'super':
+        metaKey = true;
+        break;
+      default:
+        key = part;
+    }
+  }
+  if (key === '') key = parts[parts.length - 1] ?? '';
+  return { key, ctrlKey, shiftKey, altKey, metaKey };
+}
+
+function dispatchKey(target: Element, type: string, key: string, combo: KeyCombo): void {
+  target.dispatchEvent(
+    new KeyboardEvent(type, {
+      key,
+      ctrlKey: combo.ctrlKey,
+      shiftKey: combo.shiftKey,
+      altKey: combo.altKey,
+      metaKey: combo.metaKey,
+      bubbles: true,
+    }),
+  );
 }
 
 export async function executeDomAction(
@@ -52,37 +179,51 @@ export async function executeDomAction(
       return { element: l.info };
     }
     case 'fill': {
-      return withElement(doc, params, 'selector', (l) => {
-        const el = l.element as HTMLInputElement | HTMLTextAreaElement;
-        el.value = String(params.value ?? '');
-        fire(el, 'input');
-        fire(el, 'change');
-        return { element: l.info };
-      });
+      const el = resolveInput(doc, String(params.selector));
+      const value = String(params.value ?? '');
+      if (el.isContentEditable) {
+        el.textContent = value;
+      } else {
+        (el as HTMLInputElement | HTMLTextAreaElement).value = value;
+      }
+      fire(el, 'input');
+      fire(el, 'change');
+      return { element: toElementInfo(el) };
     }
     case 'type': {
-      return withElement(doc, params, 'selector', (l) => {
-        const el = l.element as HTMLInputElement | HTMLTextAreaElement;
-        el.focus();
-        const text = String(params.text ?? '');
-        for (const ch of text) {
-          el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
-          el.dispatchEvent(new KeyboardEvent('keypress', { key: ch, bubbles: true }));
-          el.value += ch;
-          el.dispatchEvent(new InputEvent('input', { bubbles: true, data: ch }));
-        }
-        fire(el, 'change');
-        return { element: l.info };
-      });
+      const el = resolveInput(doc, String(params.selector));
+      el.focus();
+      const text = String(params.text ?? '');
+      const isField =
+        el.tagName.toLowerCase() === 'input' || el.tagName.toLowerCase() === 'textarea';
+      for (const ch of text) {
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keypress', { key: ch, bubbles: true }));
+        if (isField) (el as HTMLInputElement).value += ch;
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, data: ch }));
+      }
+      fire(el, 'change');
+      return { element: toElementInfo(el) };
     }
     case 'press': {
-      const key = String(params.key ?? '');
+      const combo = parseKeyCombo(String(params.key ?? ''));
       const target =
         params.selector !== undefined
           ? findByCss(doc, String(params.selector)).element
           : (doc.activeElement ?? doc.body);
-      target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
-      target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
+
+      const modifiers: Array<{ key: string; on: boolean }> = [
+        { key: 'Control', on: combo.ctrlKey },
+        { key: 'Shift', on: combo.shiftKey },
+        { key: 'Alt', on: combo.altKey },
+        { key: 'Meta', on: combo.metaKey },
+      ];
+      const pressed = modifiers.filter((m) => m.on);
+      for (const m of pressed) dispatchKey(target, 'keydown', m.key, combo);
+      dispatchKey(target, 'keydown', combo.key, combo);
+      dispatchKey(target, 'keypress', combo.key, combo);
+      dispatchKey(target, 'keyup', combo.key, combo);
+      for (const m of [...pressed].reverse()) dispatchKey(target, 'keyup', m.key, combo);
       return { element: toElementInfo(target) };
     }
     case 'hover': {
@@ -145,8 +286,7 @@ export async function executeDomAction(
       });
 
     case 'extract': {
-      const limit = params.limit !== undefined ? Number(params.limit) : undefined;
-      return { snapshot: buildPageSnapshot(doc, tabId, navId, limit) };
+      return extractPage(doc, params as ExtractOptions, tabId, navId);
     }
     case 'get-page-info': {
       return {

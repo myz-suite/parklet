@@ -17,6 +17,14 @@ interface GlobalOpts {
   session?: string;
   /** screenshot 的 --path（写文件目标） */
   path?: string;
+  /** extract structured 的 --prettify（仅展示，不进 wire） */
+  prettify?: boolean;
+}
+
+interface CachedEvent {
+  event: string;
+  params: Record<string, unknown>;
+  ts: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -52,7 +60,7 @@ async function callCommand(
 }
 
 async function callSession(
-  action: 'new' | 'use' | 'close' | 'mode',
+  action: 'new' | 'use' | 'close',
   opts: GlobalOpts,
   extra: Record<string, unknown> = {},
 ): Promise<Record<string, unknown> | ProtocolError> {
@@ -95,20 +103,13 @@ async function fetchLedger(
   }
 }
 
-async function approve(
+async function fetchEvents(
   opts: GlobalOpts,
-  requestId: string,
-  allow: boolean,
-): Promise<Record<string, unknown>> {
+): Promise<{ events: CachedEvent[]; unreadCount: number } | { error: string }> {
   const base = opts.server.replace(/\/+$/, '');
   try {
-    const res = await fetch(`${base}/api/approve/${encodeURIComponent(requestId)}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ approve: allow }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    return (await res.json()) as Record<string, unknown>;
+    const res = await fetch(`${base}/api/events`, { signal: AbortSignal.timeout(10_000) });
+    return (await res.json()) as { events: CachedEvent[]; unreadCount: number };
   } catch (err) {
     return { error: `cannot reach server at ${base}: ${(err as Error).message}` };
   }
@@ -128,6 +129,7 @@ function exitCodeFor(code: ErrorCode | undefined): number {
     case 'SESSION_TAB_CLOSED':
     case 'TARGET_NOT_FOUND':
     case 'TARGET_AMBIGUOUS':
+    case 'TAB_NOT_ACTIVE':
     case 'URL_INVALID':
     case 'HOST_NOT_ALLOWED':
     case 'EVAL_DISABLED':
@@ -135,10 +137,6 @@ function exitCodeFor(code: ErrorCode | undefined): number {
     case 'EXTENSION_OFFLINE':
     case 'EXTENSION_NO_TAB':
       return 4;
-    case 'PENDING_APPROVAL':
-    case 'APPROVAL_DENIED':
-    case 'APPROVAL_TIMEOUT':
-      return 5;
     case 'TIMEOUT':
       return 6;
     default:
@@ -177,24 +175,40 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
     case 'get-status': {
       const d = data as {
         extensionConnected?: boolean;
-        sessions?: Array<{ id: string; tabId?: number; mode: string; lastUsedAt: string }>;
+        sessions?: Array<{ id: string; tabId?: number; lastUsedAt: string }>;
         config?: Record<string, unknown>;
       };
       console.log(`extension: ${d.extensionConnected ? 'connected ✅' : 'offline ❌'}`);
       console.log(`sessions: ${(d.sessions ?? []).length}`);
       for (const s of d.sessions ?? []) {
-        console.log(`  ${s.id}  tab=${s.tabId ?? '-'}  mode=${s.mode}  last=${s.lastUsedAt}`);
+        console.log(`  ${s.id}  tab=${s.tabId ?? '-'}  last=${s.lastUsedAt}`);
       }
       break;
     }
     case 'extract': {
       const d = data as {
+        mode?: 'text' | 'structured' | 'article';
         snapshot?: { visibleText?: string; viewport?: { width: number; height: number } };
+        texts?: string[];
+        nodes?: unknown;
+        truncated?: boolean;
+        content?: string;
+        title?: string;
       };
       if (ctx) console.log(ctx);
-      console.log(d.snapshot?.visibleText ?? '(no text)');
-      if (d.snapshot?.viewport)
-        console.log(`\n[viewport ${d.snapshot.viewport.width}x${d.snapshot.viewport.height}]`);
+      if (d.mode === 'article') {
+        if (d.title) console.log(`# ${d.title}`);
+        console.log(d.content ?? '(no content)');
+      } else if (Array.isArray(d.texts)) {
+        d.texts.forEach((t, i) => console.log(`[${i + 1}] ${t}`));
+      } else if (d.nodes !== undefined) {
+        console.log(opts.prettify ? JSON.stringify(d.nodes, null, 2) : JSON.stringify(d.nodes));
+        if (d.truncated === true) console.log('(truncated at node budget)');
+      } else {
+        console.log(d.snapshot?.visibleText ?? '(no text)');
+        if (d.snapshot?.viewport)
+          console.log(`\n[viewport ${d.snapshot.viewport.width}x${d.snapshot.viewport.height}]`);
+      }
       break;
     }
     case 'get-page-info': {
@@ -326,6 +340,7 @@ async function run(
     timeout: String(opts.timeout ?? '30000'),
     session: typeof opts.session === 'string' ? opts.session : undefined,
     path: typeof opts.path === 'string' ? opts.path : undefined,
+    prettify: Boolean(opts.prettify),
   };
   const res = await callCommand(method, params, g);
   if ('error' in res) {
@@ -333,6 +348,8 @@ async function run(
     process.exitCode = exitCodeFor(res.error.code);
   } else {
     printResult(method, res.result, g);
+    const unread = (res.result as { unreadCount?: number }).unreadCount ?? 0;
+    if (unread > 0 && !g.json) console.log(`\n🔔 ${unread} new events, run \`plt events\``);
     process.exitCode = 0;
   }
 }
@@ -410,7 +427,7 @@ export function buildProgram(): Command {
     program,
     'press',
     'press',
-    'press a keyboard key',
+    'press a key or combo (e.g. Enter, Control+c, Meta+s, Shift+Tab)',
     (opts, args) => ({ selector: opts.selector, key: args[0] }),
     (c) => c.argument('<key>').option('--selector <css>', 'optional target element'),
   );
@@ -463,11 +480,17 @@ export function buildProgram(): Command {
     program,
     'screenshot',
     'screenshot',
-    'capture a screenshot',
-    (opts) => ({ path: opts.path, fullPage: opts.full, format: opts.format }),
+    'capture a screenshot (optionally a single element)',
+    (opts) => ({
+      path: opts.path,
+      fullPage: opts.full,
+      format: opts.format,
+      selector: opts.selector,
+    }),
     (c) =>
       c
         .option('--path <file>', 'write to file (default: base64 to stdout)')
+        .option('--selector <css>', 'capture a single element (tab must be active)')
         .option('--full', 'full page (experimental)')
         .option('--format <fmt>', 'png|jpeg', 'png'),
   );
@@ -477,12 +500,28 @@ export function buildProgram(): Command {
     program,
     'extract',
     'extract',
-    'extract readable page text',
+    'extract text, a DOM tree, or an article body',
     (opts) => ({
-      limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
       mode: opts.mode,
+      article: opts.article,
+      selector: opts.selector,
+      offset: opts.offset !== undefined ? Number(opts.offset) : undefined,
+      limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
+      depth: opts.depth !== undefined ? Number(opts.depth) : undefined,
+      visibleOnly: opts.visibleOnly,
+      maxChars: opts.maxChars !== undefined ? Number(opts.maxChars) : undefined,
     }),
-    (c) => c.option('--limit <chars>').option('--mode <m>', 'text|structured', 'text'),
+    (c) =>
+      c
+        .option('--mode <m>', 'text|structured', 'text')
+        .option('--article', 'extract article body (defuddle)')
+        .option('--selector <css>', 'CSS selector (first-level list)')
+        .option('--depth <n>', 'structured recursion depth (default 3)')
+        .option('--offset <n>', 'skip first N elements of the first-level list')
+        .option('--limit <n>', 'max elements of the first-level list (element count)')
+        .option('--max-chars <n>', 'truncate text mode per segment (default: no truncation)')
+        .option('--prettify', 'pretty-print structured JSON')
+        .option('--visible-only', 'filter invisible first-level elements'),
   );
   register(
     program,
@@ -588,7 +627,9 @@ export function buildProgram(): Command {
       console.log(`parkinglot-server listening on ${running.url}`);
       console.log(`extension websocket: ${running.wsPath}`);
       console.log(`pair token: ${running.token}`);
-      console.log('load the extension, pair it with this token, then use `plt status`; Ctrl-C to stop.');
+      console.log(
+        'load the extension, pair it with this token, then use `plt status`; Ctrl-C to stop.',
+      );
       const shutdown = async (): Promise<void> => {
         await running.close();
         process.exit(0);
@@ -601,9 +642,8 @@ export function buildProgram(): Command {
   program
     .command('session')
     .description('manage sessions (continuity units)')
-    .argument('<action>', 'list|new|use|close|mode')
-    .argument('[id]', 'session id (use/close/mode)')
-    .option('--mode <m>', 'auto|ask (for new/mode)', 'auto')
+    .argument('<action>', 'list|new|use|close')
+    .argument('[id]', 'session id (use/close)')
     .action(async function (this: Command, action: string, id: string | undefined) {
       const opts = this.optsWithGlobals() as Record<string, unknown>;
       const g = globalOptsFrom(opts);
@@ -617,34 +657,32 @@ export function buildProgram(): Command {
         const sessions = (status.sessions ?? []) as Array<{
           id: string;
           tabId?: number;
-          mode: string;
           lastUsedAt: string;
         }>;
         for (const s of sessions) {
           const def = status.defaultSessionId === s.id ? ' (default)' : '';
-          console.log(`${s.id}${def}  tab=${s.tabId ?? '-'}  mode=${s.mode}  last=${s.lastUsedAt}`);
+          console.log(`${s.id}${def}  tab=${s.tabId ?? '-'}  last=${s.lastUsedAt}`);
         }
         return;
       }
-      const map: Record<string, 'new' | 'use' | 'close' | 'mode'> = {
+      const map: Record<string, 'new' | 'use' | 'close'> = {
         new: 'new',
         use: 'use',
         close: 'close',
-        mode: 'mode',
       };
       const act = map[action];
       if (!act) {
-        console.error(`unknown session action '${action}' (list|new|use|close|mode)`);
+        console.error(`unknown session action '${action}' (list|new|use|close)`);
         process.exitCode = 2;
         return;
       }
-      const res = await callSession(act, g, { id, mode: opts.mode });
+      const res = await callSession(act, g, { id });
       if ('error' in res) {
         console.error(`✖ ${String(res.error)}`);
         process.exitCode = 3;
         return;
       }
-      const s = res.session as { id?: string; tabId?: number; mode?: string } | undefined;
+      const s = res.session as { id?: string; tabId?: number } | undefined;
       console.log(
         `session ${s?.id ?? '?'} ${res.ok ? (act === 'close' ? 'closed' : 'ok') : 'not found'}${s?.tabId !== undefined ? ` tab=${s.tabId}` : ''}`,
       );
@@ -678,30 +716,36 @@ export function buildProgram(): Command {
       }
     });
 
-  // 审批
+  // 事件（tab 生命周期；拉取后清空未读）
   program
-    .command('approve')
-    .description('approve a pending HITL request')
-    .argument('<requestId>')
-    .action(async function (this: Command, requestId: string) {
-      const g = globalOptsFrom(this.optsWithGlobals());
-      const res = await approve(g, requestId, true);
-      console.log(
-        res.ok ? `✅ approved ${requestId}` : `✖ ${String(res.error ?? 'request not found')}`,
-      );
-      if (!res.ok) process.exitCode = 3;
-    });
-  program
-    .command('deny')
-    .description('deny a pending HITL request')
-    .argument('<requestId>')
-    .action(async function (this: Command, requestId: string) {
-      const g = globalOptsFrom(this.optsWithGlobals());
-      const res = await approve(g, requestId, false);
-      console.log(
-        res.ok ? `⛔ denied ${requestId}` : `✖ ${String(res.error ?? 'request not found')}`,
-      );
-      if (!res.ok) process.exitCode = 3;
+    .command('events')
+    .description('show recent tab lifecycle events (and clear the unread count)')
+    .option('--tail <n>', 'last N events', '100')
+    .action(async function (this: Command) {
+      const opts = this.optsWithGlobals() as Record<string, unknown>;
+      const g = globalOptsFrom(opts);
+      const res = await fetchEvents(g);
+      if ('error' in res) {
+        console.error(`✖ ${String(res.error)}`);
+        process.exitCode = 4;
+        return;
+      }
+      const tail = Number(opts.tail) || 100;
+      const events = res.events.slice(-tail);
+      if (g.json) {
+        console.log(JSON.stringify({ unreadCount: res.unreadCount, events }));
+        return;
+      }
+      for (const e of events) {
+        const { tabId, windowId, url } = e.params as {
+          tabId?: number;
+          windowId?: number;
+          url?: string;
+        };
+        const extra = url ? ` ${url}` : '';
+        console.log(`${e.ts}  ${e.event}  tab=${tabId ?? '-'} win=${windowId ?? '-'}${extra}`);
+      }
+      if (events.length === 0) console.log('(no events)');
     });
 
   return program;
@@ -720,11 +764,7 @@ function globalOptsFrom(opts: Record<string, unknown>): GlobalOpts {
   };
 }
 
-// 供测试导入时避免副作用执行
-if (
-  process.argv[1] !== undefined &&
-  import.meta.url.endsWith(process.argv[1].replace(/^file:\/\//, ''))
-) {
-  const program = buildProgram();
-  void program.parseAsync(process.argv);
-}
+// 直接执行：不依赖 import.meta.url 与 argv[1] 的字符串匹配（npm -g symlink 下 argv[1]
+// 是软链路径、import.meta.url 是真实路径，旧守卫会误判为“被导入”而静默不执行）。
+const program = buildProgram();
+void program.parseAsync(process.argv);

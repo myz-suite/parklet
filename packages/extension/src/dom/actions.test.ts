@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { executeDomAction, parseSearchResults } from './actions.js';
+import { executeDomAction, parseKeyCombo, parseSearchResults, resolveInput } from './actions.js';
 
 beforeAll(() => {
   Element.prototype.getBoundingClientRect = () =>
@@ -66,6 +66,130 @@ describe('interaction actions', () => {
     document.body.innerHTML = '<div style="height:2000px"></div>';
     const res = await executeDomAction('scroll', { direction: 'down' }, document, 1, 0);
     expect((res as { viewport: { width: number } }).viewport.width).toBeGreaterThan(0);
+  });
+});
+
+describe('resolveInput', () => {
+  it('returns an editable element directly', () => {
+    document.body.innerHTML = '<input id="a" />';
+    expect(resolveInput(document, '#a')).toBe(document.getElementById('a'));
+  });
+
+  it('resolves label[for] to its input', () => {
+    document.body.innerHTML = '<label for="f">Name</label><input id="f" />';
+    expect(resolveInput(document, 'label')).toBe(document.getElementById('f'));
+  });
+
+  it('resolves a wrapping label to the nested input', () => {
+    document.body.innerHTML = '<label>Name <input id="g" /></label>';
+    expect(resolveInput(document, 'label')).toBe(document.getElementById('g'));
+  });
+
+  it('resolves a container with a single descendant input', () => {
+    document.body.innerHTML = '<div id="wrap"><span>Name</span><textarea id="t"></textarea></div>';
+    expect(resolveInput(document, '#wrap')).toBe(document.getElementById('t'));
+  });
+
+  it('throws TARGET_AMBIGUOUS for multiple candidates', () => {
+    document.body.innerHTML = '<div id="wrap"><input id="x" /><input id="y" /></div>';
+    expect(() => resolveInput(document, '#wrap')).toThrowError(/multiple inputs/);
+    try {
+      resolveInput(document, '#wrap');
+    } catch (err) {
+      expect((err as { code?: string }).code).toBe('TARGET_AMBIGUOUS');
+    }
+  });
+
+  it('throws TARGET_NOT_FOUND when nothing matches', () => {
+    document.body.innerHTML = '<div id="empty"></div>';
+    expect(() => resolveInput(document, '#empty')).toThrowError(/no input found/);
+    try {
+      resolveInput(document, '#empty');
+    } catch (err) {
+      expect((err as { code?: string }).code).toBe('TARGET_NOT_FOUND');
+    }
+  });
+});
+
+describe('parseKeyCombo', () => {
+  it('parses modifier combos', () => {
+    expect(parseKeyCombo('Control+c')).toMatchObject({ key: 'c', ctrlKey: true });
+    expect(parseKeyCombo('Meta+s')).toMatchObject({ key: 's', metaKey: true });
+    expect(parseKeyCombo('Shift+Tab')).toMatchObject({ key: 'Tab', shiftKey: true });
+    expect(parseKeyCombo('Control+Shift+k')).toMatchObject({ ctrlKey: true, shiftKey: true });
+  });
+
+  it('parses a plain key', () => {
+    expect(parseKeyCombo('Enter')).toEqual({
+      key: 'Enter',
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+    });
+  });
+});
+
+describe('press combos', () => {
+  it('dispatches the full modifier sequence with modifier flags', async () => {
+    document.body.innerHTML = '<input id="in" />';
+    const input = document.getElementById('in')!;
+    const seen: Array<{ type: string; key: string; ctrl: boolean }> = [];
+    for (const type of ['keydown', 'keyup']) {
+      input.addEventListener(type, (e) => {
+        const ke = e as KeyboardEvent;
+        seen.push({ type, key: ke.key, ctrl: ke.ctrlKey });
+      });
+    }
+    await executeDomAction('press', { selector: '#in', key: 'Control+a' }, document, 1, 0);
+    expect(seen).toEqual([
+      { type: 'keydown', key: 'Control', ctrl: true },
+      { type: 'keydown', key: 'a', ctrl: true },
+      { type: 'keyup', key: 'a', ctrl: true },
+      { type: 'keyup', key: 'Control', ctrl: true },
+    ]);
+  });
+});
+
+describe('extract with selector / structured', () => {
+  it('text + selector returns each first-layer element text', async () => {
+    document.body.innerHTML = '<ul id="l"><li>one</li><li>two</li><li>three</li></ul>';
+    const res = (await executeDomAction(
+      'extract',
+      { mode: 'text', selector: '#l', offset: 1, limit: 1 },
+      document,
+      1,
+      0,
+    )) as { mode: string; texts: string[] };
+    expect(res.mode).toBe('text');
+    expect(res.texts).toEqual(['two']);
+  });
+
+  it('structured builds a DomNode tree with depth', async () => {
+    document.body.innerHTML = '<div id="root"><section><p>deep</p></section></div>';
+    const res = (await executeDomAction(
+      'extract',
+      { mode: 'structured', selector: '#root', depth: 2 },
+      document,
+      1,
+      0,
+    )) as { mode: string; nodes: Array<{ tag: string; children: unknown[] }> };
+    expect(res.mode).toBe('structured');
+    expect(res.nodes).toHaveLength(1);
+    expect(res.nodes[0]?.tag).toBe('section');
+    expect(res.nodes[0]?.children).toHaveLength(1);
+  });
+
+  it('visibleOnly filters hidden first-layer elements', async () => {
+    document.body.innerHTML = '<div id="c"><p>keep</p><p style="display:none">hide</p></div>';
+    const res = (await executeDomAction(
+      'extract',
+      { mode: 'structured', selector: '#c', visibleOnly: true },
+      document,
+      1,
+      0,
+    )) as { nodes: Array<{ tag: string; text?: string }> };
+    expect(res.nodes.map((n) => n.text)).toEqual(['keep']);
   });
 });
 

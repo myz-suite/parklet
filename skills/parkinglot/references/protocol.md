@@ -76,7 +76,7 @@ plt session list|use|new|close
 
 ## Command Set
 
-Write-access markers drive HITL: `always` = needs approval; `never` = read-only; `conditional` = depends on parameters.
+Write-access markers are advisory (audit/logging): `always` = write operation; `never` = read-only; `conditional` = depends on parameters.
 
 ### Navigation
 
@@ -89,29 +89,51 @@ Write-access markers drive HITL: `always` = needs approval; `never` = read-only;
 
 ### Interaction
 
-| Command      | Params                                       | Returns data               | Write  |
-| ------------ | -------------------------------------------- | -------------------------- | ------ |
-| `click`      | `selector` (CSS)                             | `{ element: ElementInfo }` | always |
-| `click-text` | `text` (visible text, fuzzy match + dedup)   | `{ element }`              | always |
-| `fill`       | `selector`, `value` (whole-value replace)    | `{ element }`              | always |
-| `type`       | `selector`, `text` (per keystroke)           | `{ element }`              | always |
-| `press`      | `selector?`, `key`                           | `{ element }`              | always |
-| `hover`      | `selector`                                   | `{ element }`              | always |
-| `select`     | `selector`, `value?`/`label?` (at least one) | `{ element }`              | always |
+| Command      | Params                                                                                                          | Returns data               | Write  |
+| ------------ | --------------------------------------------------------------------------------------------------------------- | -------------------------- | ------ |
+| `click`      | `selector` (CSS)                                                                                                | `{ element: ElementInfo }` | always |
+| `click-text` | `text` (visible text, fuzzy match + dedup)                                                                      | `{ element }`              | always |
+| `fill`       | `selector`, `value` (whole-value replace; selector may point at a label/container and is resolved to its input) | `{ element }`              | always |
+| `type`       | `selector`, `text` (per keystroke; selector resolved to its input)                                              | `{ element }`              | always |
+| `press`      | `selector?`, `key` (Playwright-style combo, e.g. `Control+c`)                                                   | `{ element }`              | always |
+| `hover`      | `selector`                                                                                                      | `{ element }`              | always |
+| `select`     | `selector`, `value?`/`label?` (at least one)                                                                    | `{ element }`              | always |
 
 ### Scroll / View
 
 | Command      | Params                                                                   | Returns data               | Write  |
 | ------------ | ------------------------------------------------------------------------ | -------------------------- | ------ |
 | `scroll`     | `direction?` (up/down/top/bottom), `amount?`, `selector?` (at least one) | `{ viewport }`             | always |
-| `screenshot` | `format?` (png/jpeg), `fullPage?`, `path?`                               | `{ data?: base64, path? }` | never  |
+| `screenshot` | `format?` (png/jpeg), `fullPage?`, `selector?` (element crop), `path?`   | `{ data?: base64, path? }` | never  |
+
+> Element screenshots (`selector`) require the target tab to be the active tab of its window; otherwise `TAB_NOT_ACTIVE`. The element is scrolled (instantly) into view if needed and the visible part is cropped (`devicePixelRatio`/zoom aware). If the tab is not active, activate it first (`plt tab <id>`) or omit `selector`.
 
 ### Extraction
 
-| Command         | Params                                      | Returns data                                                     | Write |
-| --------------- | ------------------------------------------- | ---------------------------------------------------------------- | ----- |
-| `extract`       | `mode?` (text/structured), `limit?` (chars) | `{ snapshot: PageSnapshot }` (visible text + viewport + scrollY) | never |
-| `get-page-info` | —                                           | `{ url, title, viewport, scrollY }`                              | never |
+| Command         | Params                                  | Returns data                         | Write |
+| --------------- | --------------------------------------- | ------------------------------------ | ----- |
+| `extract`       | see below (text / structured / article) | discriminated union by result `mode` | never |
+| `get-page-info` | —                                       | `{ url, title, viewport, scrollY }`  | never |
+
+`extract` params (all optional):
+
+- `mode`: `text` (default) or `structured`.
+- `article`: `true` → defuddle article extraction. Mutually exclusive with `mode`; `selector` is then used as `contentSelector`.
+- `selector`: CSS selector. Without it, text = whole page and structured = `body`.
+- `offset` / `limit`: applied to the **first-level list** — the matched roots when the selector matches several elements, or a single root's children when it matches one. `limit` is always an element count.
+- `depth`: recursion depth below each root (exclusive of the root); default 3, no fixed cap.
+- `visibleOnly`: drop invisible elements from the first-level list (subtrees keep their structure).
+- `maxChars`: per-segment character truncation for text mode (omitted = no truncation).
+
+Result is discriminated by `mode`:
+
+```ts
+type ExtractResult =
+  | { mode: 'text'; snapshot: PageSnapshot } // no selector, whole page
+  | { mode: 'text'; texts: string[] } // with selector, per first-level element
+  | { mode: 'structured'; nodes: DomNode[]; truncated?: boolean } // DOM tree (maxNodes=500 budget, BFS truncation)
+  | { mode: 'article'; content: string; title?; author?; site?; wordCount? };
+```
 
 ### In-page Network (executed in the real page context, with login state)
 
@@ -150,7 +172,7 @@ Write-access markers drive HITL: `always` = needs approval; `never` = read-only;
 | ------- | ------------ | ------------ | ------ |
 | `eval`  | `expression` | `{ value }`  | always |
 
-`eval` requires `PARKINGLOT_ENABLE_EVAL=1` and session `mode: trust`; otherwise `EVAL_DISABLED`.
+`eval` is disabled by default (it is in `PARKINGLOT_DISABLED_COMMANDS`); when disabled the server returns `EVAL_DISABLED`.
 
 ## Events (v1 minimal set)
 
@@ -158,12 +180,13 @@ Write-access markers drive HITL: `always` = needs approval; `never` = read-only;
 | ------------------------------------------------ | ------------------ | ------------------------- | ----------------------------------------------- |
 | `extension.connected` / `extension.disconnected` | server → extension | extension WS state change | logs, status                                    |
 | `extension.tab-activated`                        | extension → server | tab activation            | server tracks "most recent active tab" fallback |
-| `page.navigated`                                 | extension → server | top-frame navigation done | audit, (future) long-running agent push         |
-| `approval.requested`                             | server → extension | write op entered HITL     | popup approval queue                            |
-| `approval.respond`                               | extension → server | popup approve/deny        | server writes back to ApprovalManager           |
-| `approval.responded`                             | (reserved)         | HITL state change         | future event streams                            |
+| `page.navigated`                                 | extension → server | top-frame navigation done | audit                                           |
+| `tab.created`                                    | extension → server | a tab is created          | server event cache / unread count               |
+| `tab.removed`                                    | extension → server | a tab is closed           | session tab unbinding + event cache             |
 
-`Network.*` is an extension point: page-level network events are not implemented in v1.
+`tab.created` / `tab.removed` are cached in memory (last 100) and surfaced by `plt events` / `GET /api/events`; command responses carry the unread count. When a session's tab is removed, the binding is cleared and the next command falls back to the most recently active tab.
+
+`Network.*` is an extension point: page-level network events are not implemented.
 
 ## Error Codes
 
@@ -174,9 +197,9 @@ Write-access markers drive HITL: `always` = needs approval; `never` = read-only;
 | `SESSION_NOT_FOUND` / `SESSION_TAB_CLOSED`                                    | session missing / its tab is closed        |
 | `TIMEOUT`                                                                     | command timed out (default 30 s)           |
 | `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS`                                       | locator matched nothing / several elements |
+| `TAB_NOT_ACTIVE`                                                              | element screenshot on a non-active tab     |
 | `URL_INVALID` / `HOST_NOT_ALLOWED`                                            | invalid URL / host not in allowlist        |
 | `EVAL_DISABLED`                                                               | eval not enabled                           |
-| `PENDING_APPROVAL` / `APPROVAL_DENIED` / `APPROVAL_TIMEOUT`                   | HITL: pending / denied / timed out         |
 | `INTERNAL`                                                                    | catch-all error                            |
 
 ## Validation (Postel's Law)
@@ -215,12 +238,17 @@ interface TabInfo {
 interface SessionInfo {
   id: string;
   tabId?: number;
-  mode: 'auto' | 'ask';
   createdAt: string;
   lastUsedAt: string;
 }
 interface Viewport {
   width: number;
   height: number;
+}
+interface DomNode {
+  tag: string;
+  attrs: Record<string, string>;
+  text?: string;
+  children: DomNode[];
 }
 ```

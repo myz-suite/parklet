@@ -1,7 +1,7 @@
 import { PROTOCOL_VERSION, type EventMessage } from '@parkinglot/protocol';
 import type { ServerConfig } from './config.js';
 import { loadConfig } from './config.js';
-import { ApprovalManager } from './approval.js';
+import { EventCache, isCachedEvent } from './event-cache.js';
 import { Ledger } from './ledger.js';
 import { Router } from './router.js';
 import { SessionRegistry } from './session.js';
@@ -26,23 +26,22 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
   const config: ServerConfig = { ...loadConfig(), ...overrides };
   const ledger = new Ledger(config.stateDir);
   const registry = new SessionRegistry(config.stateDir);
-  const approval = new ApprovalManager(config.approvalTimeoutMs);
+  const events = new EventCache();
   const hub = new ExtensionHub(config.token);
-  const router = new Router({ config, registry, hub, ledger, approval });
-  // 扩展 → server 控制事件：popup 对 HITL 请求的批准/拒绝
+  const router = new Router({ config, registry, hub, ledger });
   hub.on('event', (event: EventMessage) => {
-    if (event.event === 'approval.respond') {
-      const { requestId, approved } = event.params as { requestId?: string; approved?: boolean };
-      if (typeof requestId === 'string') {
-        approval.respond(requestId, approved !== false);
-      }
+    if (isCachedEvent(event)) events.push(event);
+    // tab 关闭：主动解除所有绑定该 tab 的 session（tab.removed 的主动路径）
+    if (event.event === 'tab.removed') {
+      const tabId = event.params.tabId;
+      if (typeof tabId === 'number') registry.unbindTab(tabId);
     }
   });
   const httpServer = startHttp({
     config,
     router,
     registry,
-    approval,
+    events,
     ledger,
     isExtensionOnline: () => hub.isOnline(),
   });

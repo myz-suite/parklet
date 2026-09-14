@@ -50,10 +50,8 @@ export const EVENT_NAMES = [
   'extension.disconnected',
   'extension.tab-activated',
   'page.navigated',
-  'approval.requested',
-  'approval.responded',
-  // 扩展 → server 控制事件：popup 对 HITL 请求的批准/拒绝
-  'approval.respond',
+  'tab.created',
+  'tab.removed',
   // Network.* 为扩展点：v1 不实现页面级网络事件
 ] as const;
 

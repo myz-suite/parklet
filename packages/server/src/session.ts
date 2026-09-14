@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ParkinglotError, type ContextSnapshot, type SessionMode } from '@parkinglot/protocol';
+import { ParkinglotError, type ContextSnapshot } from '@parkinglot/protocol';
 
 export interface Session {
   id: string;
   tabId?: number;
-  mode: SessionMode;
   createdAt: string;
   lastUsedAt: string;
   /** 易失字段：扩展重连后由扩展重新上报，不持久化 */
@@ -61,12 +60,11 @@ export class SessionRegistry {
     writeFileSync(this.stateFilePath, JSON.stringify(data, null, 2));
   }
 
-  create(opts?: { tabId?: number; mode?: SessionMode }): Session {
+  create(opts?: { tabId?: number }): Session {
     const now = new Date().toISOString();
     const session: Session = {
       id: `pl-${randomUUID().slice(0, 8)}`,
       tabId: opts?.tabId,
-      mode: opts?.mode ?? 'auto',
       createdAt: now,
       lastUsedAt: now,
     };
@@ -94,14 +92,6 @@ export class SessionRegistry {
     this.save();
   }
 
-  setMode(id: string, mode: SessionMode): boolean {
-    const s = this.sessions.get(id);
-    if (!s) return false;
-    s.mode = mode;
-    this.save();
-    return true;
-  }
-
   setDefault(id: string): boolean {
     if (!this.sessions.has(id)) return false;
     this.defaultSessionId = id;
@@ -120,6 +110,18 @@ export class SessionRegistry {
     return removed;
   }
 
+  /** 解除所有绑定到该 tabId 的 session（tab 关闭/失效时调用）。 */
+  unbindTab(tabId: number): void {
+    let changed = false;
+    for (const s of this.sessions.values()) {
+      if (s.tabId === tabId) {
+        s.tabId = undefined;
+        changed = true;
+      }
+    }
+    if (changed) this.save();
+  }
+
   /**
    * 寻址解析。优先级：sessionId > tabId > 默认 session > 最近活跃 tab（latestTabId）。
    * 解析失败抛出带标准错误码的 ParkinglotError。
@@ -134,7 +136,16 @@ export class SessionRegistry {
         );
       }
       if (s.tabId === undefined) {
-        throw new ParkinglotError('SESSION_TAB_CLOSED', `session ${s.id} has no live tab`);
+        // session 的 tab 已失效：回退到全局最近激活 tab 并重绑；
+        // 若连 latestTabId 也没有（尚无 tab-activated），则无可寻址目标。
+        if (latestTabId !== undefined) {
+          this.touch(s.id, { tabId: latestTabId });
+          return { sessionId: s.id, tabId: latestTabId };
+        }
+        throw new ParkinglotError(
+          'EXTENSION_NO_TAB',
+          `session ${s.id} has no live tab and no active tab to fall back to`,
+        );
       }
       return { sessionId: s.id, tabId: s.tabId };
     }

@@ -1,6 +1,8 @@
 # ParkingLot — 初始设计与实施计划
 
-> **状态**：已实施（Phase 1–5 完成，真实 Chrome 152 端到端验证通过；本文件已与实现同步，命令命名/事件/默认引擎以 `skills/parkinglot/references/protocol.md` 为准）
+> **v2 变更（2026-09-11）**：HITL 已**完全移除**（approval 代码、`ask` mode、`approve`/`deny`、popup 批准队列）；`extract` 扩展 selector/structured（DOM 树）/article（defuddle）；`screenshot` 支持元素 selector（非 active tab 报 `TAB_NOT_ACTIVE`）；`fill`/`type` 智能解析 input；`press` 支持组合键；tab 关闭后 session 自动回退；新增 tab 生命周期事件（`tab.created`/`tab.removed`，`plt events`）。本文件保留为 v1 历史设计，文中 HITL 章节与 `SessionMode` 等**已作废**；命令/事件/错误码以 `docs/v2-incremental-plan.md` 与 `skills/parkinglot/references/protocol.md` 为准。
+>
+> **状态**：v1 已实施（Phase 1–5 完成，真实 Chrome 152 端到端验证通过；v2 增量见 `docs/v2-incremental-plan.md`）
 > **项目**：ParkingLot — 面向 AI Agent 的浏览器控制基础设施
 > **组件**：`parkinglot-server`（relay 守护进程）、`parkinglot-extension`（Chrome MV3 扩展）、`@parkinglot/protocol`（共享协议包）、`parkinglot` skill（Agent 使用指南）
 
@@ -16,7 +18,7 @@
 
 | 术语                     | 含义                                                                                       |
 | ------------------------ | ------------------------------------------------------------------------------------------ |
-| **Agent**                | LLM 驱动的程序（本项目的使用者），通过 `plt` CLI（或 HTTP）向 server 发命令                 |
+| **Agent**                | LLM 驱动的程序（本项目的使用者），通过 `plt` CLI（或 HTTP）向 server 发命令                |
 | **parkinglot-server**    | 常驻 relay 守护进程（Node + TypeScript）。一面接扩展的 WebSocket，一面接 Agent 的 CLI/HTTP |
 | **parkinglot-extension** | Chrome Manifest V3 扩展。持有 WebSocket 连接，把命令翻译为真实的浏览器操作                 |
 | **Session**              | 逻辑层寻址单元：`{ id, tabId, mode, navId, ... }`，由 server 维护，提供命令的连续性        |
@@ -251,24 +253,24 @@ interface Session {
 
 全局选项：`--server <url>`（默认 `http://127.0.0.1:8787`，CLI 走 HTTP 通道）、`--json`、`--timeout <ms>`、`--session <id>`、`--path <file>`（screenshot 写盘）。
 
-| 命令                                                                 | 说明                                          | 默认输出           |
-| -------------------------------------------------------------------- | --------------------------------------------- | ------------------ |
-| `plt status` / `plt ping`                                              | 扩展在线？server 版本                         | text 摘要          |
-| `plt goto <url>`                                                      | 导航（无 session 自动创建）                   | context 快照       |
-| `plt back / forward / reload`                                         | 历史导航                                      | context            |
-| `plt click <selector>` / `plt click-text <text>`                       | 点击                                          | ElementInfo        |
-| `plt fill <selector> <value>` / `plt type <sel> <text>`                | 输入                                          | ElementInfo        |
-| `plt press <key>` / `plt hover <sel>` / `plt select <sel> <value>`      | 交互                                          | ElementInfo        |
-| `plt scroll [up                                                       | down                                          | top                | bottom                 | amount]` | 滚动 | 视口摘要 |
-| `plt screenshot [--path x.png] [--full]`                              | 截图（默认 base64 输出长度摘要 + 可选写文件） | 摘要               |
-| `plt extract` / `plt page-info`                                        | 页面可读文本（`--limit` 裁剪）/ 页面信息      | 文本 / 摘要        |
-| `plt fetch <url> [...curl 风格选项]`                                  | 页面上下文网络请求                            | 状态码 + 体摘要    |
-| `plt search <query> [--engine google\|duckduckgo] [--page N]`         | 搜索引擎结果（默认 google，--page 翻页）      | 结果列表           |
+| 命令                                                                     | 说明                                          | 默认输出           |
+| ------------------------------------------------------------------------ | --------------------------------------------- | ------------------ |
+| `plt status` / `plt ping`                                                | 扩展在线？server 版本                         | text 摘要          |
+| `plt goto <url>`                                                         | 导航（无 session 自动创建）                   | context 快照       |
+| `plt back / forward / reload`                                            | 历史导航                                      | context            |
+| `plt click <selector>` / `plt click-text <text>`                         | 点击                                          | ElementInfo        |
+| `plt fill <selector> <value>` / `plt type <sel> <text>`                  | 输入                                          | ElementInfo        |
+| `plt press <key>` / `plt hover <sel>` / `plt select <sel> <value>`       | 交互                                          | ElementInfo        |
+| `plt scroll [up                                                          | down                                          | top                | bottom                 | amount]` | 滚动 | 视口摘要 |
+| `plt screenshot [--path x.png] [--full]`                                 | 截图（默认 base64 输出长度摘要 + 可选写文件） | 摘要               |
+| `plt extract` / `plt page-info`                                          | 页面可读文本（`--limit` 裁剪）/ 页面信息      | 文本 / 摘要        |
+| `plt fetch <url> [...curl 风格选项]`                                     | 页面上下文网络请求                            | 状态码 + 体摘要    |
+| `plt search <query> [--engine google\|duckduckgo] [--page N]`            | 搜索引擎结果（默认 google，--page 翻页）      | 结果列表           |
 | `plt tabs` / `plt tab <id>` / `plt tab-new <url>` / `plt tab-close [id]` | 标签页列表 / 切换 / 新建 / 关闭               | 列表 / context     |
-| `plt wait [--ms N                                                     | --selector css                                | --condition load]` | 等待时间/元素/加载条件 | context  |
-| `plt session list/new/use/close/mode`                                 | session 管理（mode: auto/ask）                | 列表/摘要          |
-| `plt logs [--follow] [--since]`                                       | 命令账本                                      | JSON lines         |
-| `plt approve <id>` / `plt deny <id>`                                   | HITL 远程批准（也可在 popup 操作）            | 状态               |
+| `plt wait [--ms N                                                        | --selector css                                | --condition load]` | 等待时间/元素/加载条件 | context  |
+| `plt session list/new/use/close/mode`                                    | session 管理（mode: auto/ask）                | 列表/摘要          |
+| `plt logs [--follow] [--since]`                                          | 命令账本                                      | JSON lines         |
+| `plt approve <id>` / `plt deny <id>`                                     | HITL 远程批准（也可在 popup 操作）            | 状态               |
 
 - 默认 markdown 输出（便于 Agent 阅读）；`--json` 输出结构化结果（含 `context`）便于程序消费。
 - 每个命令退出码：0 成功；2 参数错误；3 目标/会话错误；4 扩展离线；5 审批未决/被拒；1 其他。
@@ -285,7 +287,7 @@ HTTP 每次请求用独立随机 id；无鉴权（仅回环），文档注明风
 
 > 另有 `POST /api/session`（session 管理：`{ action: new/use/close/mode, id?, mode? }`），供 CLI 会话子命令使用。
 
-### 3.6 Human-in-the-loop（HITL）
+### 3.6 Human-in-the-loop（HITL）— v2 已完全移除，以下为历史设计
 
 状态机（每 session 独立）：
 
@@ -373,7 +375,7 @@ packages/extension/
 - 截图：MV3 用 `chrome.tabs.captureVisibleTab`（background 执行）+ 可选 canvas 全页拼接（v1：仅 visible viewport；`fullPage` 标记为实验）。
 - 超时与错误归一化：命令内 `wait` 循环（默认 5s 可配）后报 `TARGET_NOT_FOUND` 等标准码。
 
-### 4.5 popup（HITL 控制台）
+### 4.5 popup（配置/状态控制台；v2 已移除批准队列）
 
 - 配置区：server URL、token，连接状态灯，`保存并连接`。
 - 批准区：HITL pending 队列（命令摘要 + 批准/拒绝按钮），`ask` 模式提示。
@@ -488,7 +490,7 @@ $ plt session list / use S1 / close S1  # 显式管理
 3. 以下 CLI 命令对真实页面端到端可用：`status/goto/extract/click-text/fill/scroll/screenshot/tabs/session/fetch/search`
 4. session 连续性验证通过（同 session 两次命令 context 一致，导航后 navId 递增且 url 变化）
 5. `plt logs --follow` 能实时看到命令账本且敏感字段脱敏
-6. HITL：`ask` 模式下写操作挂起 → popup 批准 → 执行；拒绝/超时路径正确
+6. ~~HITL：`ask` 模式下写操作挂起 → popup 批准 → 执行；拒绝/超时路径正确~~（v2 已移除 HITL）
 7. `eval` 默认禁用且尝试调用返回 `EVAL_DISABLED`
 
 ---

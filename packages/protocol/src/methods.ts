@@ -1,4 +1,5 @@
 import type {
+  DomNode,
   ElementInfo,
   PageSnapshot,
   SearchPagination,
@@ -51,7 +52,7 @@ export const METHODS = [
 
 export type Method = (typeof METHODS)[number];
 
-/** HITL 分类：'always'=写操作需批准；'never'=只读；'conditional'=视参数（fetch 的 HTTP method）。 */
+/** 写操作分类（供审计/日志）：'always'=写操作；'never'=只读；'conditional'=视参数（fetch 的 HTTP method）。 */
 export type WriteAccess = 'always' | 'never' | 'conditional';
 
 export interface MethodMeta {
@@ -68,16 +69,25 @@ export const METHOD_META: Record<Method, MethodMeta> = {
   // 交互
   click: { writeAccess: 'always', summary: '按 CSS 选择器点击元素' },
   'click-text': { writeAccess: 'always', summary: '按可见文本点击元素' },
-  fill: { writeAccess: 'always', summary: '填充输入框（整体替换）' },
-  type: { writeAccess: 'always', summary: '聚焦后逐键输入' },
-  press: { writeAccess: 'always', summary: '按下键盘按键' },
+  fill: {
+    writeAccess: 'always',
+    summary: '填充输入框（整体替换；selector 可指向 label/容器，自动解析 input）',
+  },
+  type: {
+    writeAccess: 'always',
+    summary: '聚焦后逐键输入（selector 可指向 label/容器，自动解析 input）',
+  },
+  press: {
+    writeAccess: 'always',
+    summary: '按下键盘按键或组合键（Playwright 风格，如 Control+c）',
+  },
   hover: { writeAccess: 'always', summary: '悬停在元素上' },
   select: { writeAccess: 'always', summary: '选择下拉选项' },
   // 滚动 / 视图
   scroll: { writeAccess: 'always', summary: '滚动页面或元素' },
-  screenshot: { writeAccess: 'never', summary: '截图（viewport 或整页）' },
+  screenshot: { writeAccess: 'never', summary: '截图（viewport、整页或指定元素）' },
   // 提取
-  extract: { writeAccess: 'never', summary: '提取页面可读文本快照' },
+  extract: { writeAccess: 'never', summary: '提取页面文本 / DOM 树 / 文章正文' },
   'get-page-info': { writeAccess: 'never', summary: '获取页面 URL/标题/视口/滚动位置' },
   // 页面内网络
   fetch: { writeAccess: 'conditional', summary: '在页面上下文发起网络请求（带登录态）' },
@@ -151,14 +161,29 @@ export interface ScrollParams {
 export interface ScreenshotParams {
   format?: 'png' | 'jpeg';
   fullPage?: boolean;
+  /** 元素截图：CSS 选择器（非 active tab 报 TAB_NOT_ACTIVE） */
+  selector?: string;
   /** 由 CLI 侧解析后写入的本地路径（协议不负责写文件） */
   path?: string;
 }
 
 export interface ExtractParams {
+  /** text：整页/分段文本；structured：DOM 树。默认 text。 */
   mode?: 'text' | 'structured';
-  /** 返回文本的最大字符数（LLM 上下文裁剪） */
+  /** article 模式（defuddle 正文提取）；与 mode 互斥；selector 同时提供时作为 contentSelector */
+  article?: boolean;
+  /** 提供 → 按 CSS 匹配；缺省 → 整页（text）/ body（structured）/ 自动检测（article） */
+  selector?: string;
+  /** 第一层列表跳过前 N 个（多 root=roots；单 root=其子元素） */
+  offset?: number;
+  /** 第一层列表最多 N 个（元素计数，恒语义一致） */
   limit?: number;
+  /** 相对 root 递归深度，不含 root；默认 3 */
+  depth?: number;
+  /** 过滤第一层列表中不可见元素（子树照常） */
+  visibleOnly?: boolean;
+  /** text 模式每段文本字符截断（替代 v1 limit 的角色） */
+  maxChars?: number;
 }
 
 export interface FetchParams {
@@ -245,6 +270,26 @@ export interface ElementActionResult {
   element: ElementInfo;
 }
 
+/**
+ * extract 结果 = 按结果内 `mode` 判别的联合。
+ * - `mode:'text'` + `snapshot`：无 selector，整页快照
+ * - `mode:'text'` + `texts`：有 selector，每个匹配元素的文本
+ * - `mode:'structured'` + `nodes`：DOM 树（可 `truncated`）
+ * - `mode:'article'`：defuddle 正文（由 params.article=true 触发，与 params.mode 无关）
+ */
+export type ExtractResult =
+  | { mode: 'text'; snapshot: PageSnapshot }
+  | { mode: 'text'; texts: string[] }
+  | { mode: 'structured'; nodes: DomNode[]; truncated?: boolean }
+  | {
+      mode: 'article';
+      content: string;
+      title?: string;
+      author?: string;
+      site?: string;
+      wordCount?: number;
+    };
+
 export interface ResultMap {
   // 导航 —— 产物即 context（信封层）
   goto: Record<string, never>;
@@ -263,7 +308,7 @@ export interface ResultMap {
   scroll: { viewport: Viewport };
   screenshot: { data?: string; path?: string };
   // 提取
-  extract: { snapshot: PageSnapshot };
+  extract: ExtractResult;
   'get-page-info': { url: string; title: string; viewport: Viewport; scrollY: number };
   // 页面内网络
   fetch: {

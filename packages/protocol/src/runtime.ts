@@ -33,6 +33,7 @@ export type {
   CloseTabParams,
   CreateTabParams,
   EvalParams,
+  ExtractResult,
   FetchParams,
   FillParams,
   GotoParams,
@@ -52,6 +53,7 @@ export type {
 } from './methods.js';
 export type {
   ContextSnapshot,
+  DomNode,
   ElementBox,
   ElementInfo,
   Locator,
@@ -59,7 +61,6 @@ export type {
   SearchPagination,
   SearchResult,
   SessionInfo,
-  SessionMode,
   TabInfo,
   Viewport,
 } from './types.js';

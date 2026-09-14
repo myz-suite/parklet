@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-export type LedgerOutcome = 'ok' | 'error' | 'pending' | 'approved' | 'denied' | 'timeout';
+export type LedgerOutcome = 'ok' | 'error';
 
 export interface LedgerEntry {
   ts: string;

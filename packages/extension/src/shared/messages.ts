@@ -24,18 +24,11 @@ export interface ContentResult {
 export type PopupRequest =
   | { type: 'config:get' }
   | { type: 'config:set'; config: { serverUrl: string; token: string } }
-  | { type: 'state:get' }
-  | { type: 'approvals:list' }
-  | { type: 'approval:respond'; requestId: string; approved: boolean };
+  | { type: 'state:get' };
 
 // SW → popup
 export type PopupResponse =
   | { type: 'config'; serverUrl: string; token: string; connected: boolean }
   | { type: 'config:ok' }
   | { type: 'state'; connected: boolean; serverUrl: string; retryDelayMs: number }
-  | {
-      type: 'approvals';
-      items: Array<{ requestId: string; method: string; summary: string; sessionId?: string }>;
-    }
-  | { type: 'approval:ok'; requestId: string; approved: boolean }
   | { type: 'error'; message: string };

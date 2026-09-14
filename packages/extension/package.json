@@ -2,7 +2,7 @@
   "name": "@parkinglot/extension",
   "version": "0.1.0",
   "private": true,
-  "description": "ParkingLot Chrome Manifest V3 extension: WebSocket client, content-script page executor, popup console (config, status, HITL approvals).",
+  "description": "ParkingLot Chrome Manifest V3 extension: WebSocket client, content-script page executor, popup console (config, status).",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -18,6 +18,7 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
-    "@parkinglot/protocol": "workspace:*"
+    "@parkinglot/protocol": "workspace:*",
+    "defuddle": "^0.19.3"
   }
 }

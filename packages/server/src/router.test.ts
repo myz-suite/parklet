@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { EventMessage, ProtocolError, Request, Response } from '@parkinglot/protocol';
-import { ApprovalManager } from './approval.js';
 import type { ServerConfig } from './config.js';
 import { loadConfig } from './config.js';
 import { Ledger } from './ledger.js';
@@ -45,7 +44,6 @@ interface TestContext {
   config: ServerConfig;
   registry: SessionRegistry;
   ledger: Ledger;
-  approval: ApprovalManager;
   hub: FakeHub;
   router: Router;
   dir: string;
@@ -55,13 +53,12 @@ let ctx: TestContext;
 
 beforeEach(() => {
   const dir = mkdtempSync(join(tmpdir(), 'pl-router-'));
-  const config = loadConfig({ PARKINGLOT_STATE_DIR: dir, PARKINGLOT_APPROVAL_TIMEOUT_MS: '60' });
+  const config = loadConfig({ PARKINGLOT_STATE_DIR: dir });
   const registry = new SessionRegistry(dir);
   const ledger = new Ledger(dir);
-  const approval = new ApprovalManager(config.approvalTimeoutMs);
   const hub = new FakeHub();
-  const router = new Router({ config, registry, hub, ledger, approval } satisfies RouterDeps);
-  ctx = { config, registry, ledger, approval, hub, router, dir };
+  const router = new Router({ config, registry, hub, ledger } satisfies RouterDeps);
+  ctx = { config, registry, ledger, hub, router, dir };
 });
 
 afterEach(() => {
@@ -159,59 +156,6 @@ describe('Router — targeting and session', () => {
   });
 });
 
-describe('Router — HITL (ask mode)', () => {
-  async function sessionAskMode(): Promise<string> {
-    await ctx.router.handle(valid);
-    const id = ctx.registry.getDefault()!.id;
-    ctx.registry.setMode(id, 'ask');
-    return id;
-  }
-
-  it('parks write operations pending approval, then executes on approve', async () => {
-    await sessionAskMode();
-    const pending = ctx.router.handle({ id: '2', method: 'click', params: { selector: '#go' } });
-    // 等待进入 pending
-    await new Promise((r) => setTimeout(r, 10));
-    const views = ctx.approval.list();
-    expect(views).toHaveLength(1);
-    ctx.approval.respond(views[0]!.requestId, true);
-    const res = await pending;
-    expect('result' in res).toBe(true);
-  });
-
-  it('returns APPROVAL_DENIED when rejected', async () => {
-    await sessionAskMode();
-    const pending = ctx.router.handle({ id: '2', method: 'click', params: { selector: '#go' } });
-    await new Promise((r) => setTimeout(r, 10));
-    const [view] = ctx.approval.list();
-    ctx.approval.respond(view!.requestId, false);
-    const res = await pending;
-    expect('error' in res && res.error.code).toBe('APPROVAL_DENIED');
-  });
-
-  it('returns APPROVAL_TIMEOUT when nobody responds (fail-closed)', async () => {
-    await sessionAskMode();
-    const res = await ctx.router.handle({ id: '2', method: 'click', params: { selector: '#go' } });
-    expect('error' in res && res.error.code).toBe('APPROVAL_TIMEOUT');
-  });
-
-  it('never parks read-only operations', async () => {
-    await sessionAskMode();
-    const res = await ctx.router.handle({ id: '2', method: 'extract', params: {} });
-    expect('result' in res).toBe(true);
-    expect(ctx.approval.list()).toHaveLength(0);
-  });
-
-  it('records HITL decisions in the ledger', async () => {
-    await sessionAskMode();
-    const res = await ctx.router.handle({ id: '2', method: 'click', params: { selector: '#go' } });
-    expect('error' in res && res.error.code).toBe('APPROVAL_TIMEOUT');
-    const outcomes = ctx.ledger.readTail(20).map((e) => e.outcome);
-    expect(outcomes).toContain('pending');
-    expect(outcomes).toContain('timeout');
-  });
-});
-
 describe('Router — response normalization and ledger', () => {
   it('records ok entries and touches the session', async () => {
     await ctx.router.handle(valid);
@@ -220,6 +164,19 @@ describe('Router — response normalization and ledger', () => {
     const entries = ctx.ledger.readTail(10);
     expect(entries.map((e) => e.outcome)).toEqual(['ok', 'ok']);
     expect(ctx.registry.get(id)?.context?.navId).toBe(1);
+  });
+
+  it('unbinds the session tab when the extension reports SESSION_TAB_CLOSED', async () => {
+    await ctx.router.handle(valid);
+    const id = ctx.registry.getDefault()!.id;
+    expect(ctx.registry.get(id)?.tabId).toBeDefined();
+    ctx.hub.responder = (req) => ({
+      id: req.id,
+      error: { code: 'SESSION_TAB_CLOSED', message: 'No tab with id: 42' },
+    });
+    const res = await ctx.router.handle({ id: '2', method: 'extract', params: {} });
+    expect('error' in res && res.error.code).toBe('SESSION_TAB_CLOSED');
+    expect(ctx.registry.get(id)?.tabId).toBeUndefined();
   });
 
   it('propagates extension errors verbatim with the request id', async () => {

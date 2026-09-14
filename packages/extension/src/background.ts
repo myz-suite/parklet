@@ -1,7 +1,6 @@
-import { isEvent, isRequest, PROTOCOL_VERSION } from '@parkinglot/protocol/runtime';
+import { isRequest, PROTOCOL_VERSION } from '@parkinglot/protocol/runtime';
 import type {
   ContextSnapshot,
-  EventMessage,
   ProtocolError,
   Request,
   Response,
@@ -14,13 +13,14 @@ import type {
   PopupResponse,
 } from './shared/messages.js';
 import { buildSearchUrl } from './dom/searchUrl.js';
+import { computeCropRect, type ElementRectInfo } from './dom/screenshot.js';
 
 /**
  * Background service worker：
  * - WebSocket 客户端（hello+token 配对、指数退避重连）
  * - 命令路由：tab 级命令本地处理；页面命令转发 content script；导航类等待 committed 后携带新 navId
  * - navId 追踪（chrome.webNavigation）+ tab-activated 事件上报
- * - popup 消息（配置/状态/HITL 批准队列）
+ * - popup 消息（配置/状态）
  *
  * 保活：WS 连接由 SW 持有；chrome.alarms（0.5min）周期性唤醒 SW，若连接已断开则重连
  * （已在真实 Chrome 验证：空闲 85s/70s 均不掉线）。offscreen document 为更强备选方案。
@@ -35,12 +35,6 @@ let retryDelayMs = 1000;
 let connected = false;
 let config: { serverUrl: string; token: string } | null = null;
 const navIds = new Map<number, number>();
-let pendingApprovals: Array<{
-  requestId: string;
-  method: string;
-  summary: string;
-  sessionId?: string;
-}> = [];
 const pendingNavigations = new Map<number, Array<() => void>>();
 
 function code(code: ProtocolError['error']['code'], message: string): Error & { code: string } {
@@ -100,10 +94,6 @@ async function connect(): Promise<void> {
     }
     if (isRequest(msg)) {
       void handleCommand(msg);
-      return;
-    }
-    if (isEvent(msg)) {
-      handleServerEvent(msg);
     }
   };
 
@@ -155,6 +145,26 @@ chrome.tabs.onActivated.addListener((info) => {
   sendWire({ event: 'extension.tab-activated', params: { tabId: info.tabId } });
 });
 
+// tab 生命周期事件：server 缓存并计入未读（供 `plt events`）
+chrome.tabs.onCreated.addListener((tab) => {
+  sendWire({
+    event: 'tab.created',
+    params: {
+      tabId: tab.id,
+      windowId: tab.windowId,
+      url: tab.url ?? '',
+      title: tab.title ?? '',
+    },
+  });
+});
+
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  sendWire({
+    event: 'tab.removed',
+    params: { tabId, windowId: removeInfo.windowId, isWindowClosing: removeInfo.isWindowClosing },
+  });
+});
+
 /** 等待某 tab 发生主框架导航（用于导航类命令响应携带新 navId），超时兜底。 */
 function waitForNavigation(tabId: number, timeoutMs = 8000): Promise<void> {
   return new Promise((resolve) => {
@@ -197,15 +207,30 @@ interface WireRequest {
   params?: unknown;
 }
 
+/** chrome.tabs 的"tab 已不存在"错误文案（不同路径措辞略有差异），统一映射为 SESSION_TAB_CLOSED。 */
+const TAB_GONE_RE = /no tab with id|invalid tab id|no tab with id:|tab was closed/i;
+
+function normalizeError(err: unknown): { code: ProtocolError['error']['code']; message: string } {
+  const e = err as Error & { code?: string };
+  const message = e?.message ?? String(err);
+  if (typeof e?.code === 'string') {
+    return { code: e.code as ProtocolError['error']['code'], message };
+  }
+  if (TAB_GONE_RE.test(message)) {
+    return { code: 'SESSION_TAB_CLOSED', message };
+  }
+  return { code: 'INTERNAL', message };
+}
+
 async function handleCommand(req: Request): Promise<void> {
   try {
     const result = await dispatchCommand(req);
     sendWire({ id: req.id, result } as unknown as Response);
   } catch (err) {
-    const e = err as Error & { code?: string };
+    const { code: errCode, message } = normalizeError(err);
     sendWire({
       id: req.id,
-      error: { code: (e.code ?? 'INTERNAL') as ProtocolError['error']['code'], message: e.message },
+      error: { code: errCode, message },
     } satisfies ProtocolError);
   }
 }
@@ -274,9 +299,28 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
       };
     }
     case 'screenshot': {
-      const format = (req.params as { format?: string }).format ?? 'png';
+      const p = req.params as { format?: string; selector?: string };
+      const format = p.format ?? 'png';
       // captureVisibleTab 接收 windowId（可选）；先从 tabId 解析出 windowId
       const tab = await chrome.tabs.get(tabId);
+      if (p.selector !== undefined) {
+        // 只截窗口当前可见 tab；目标非 active 时行为未定义，明确报错而不是截错图
+        if (tab.active !== true) {
+          throw code(
+            'TAB_NOT_ACTIVE',
+            `tab ${tabId} is not active; switch to it before element screenshot`,
+          );
+        }
+        const rectInfo = (await sendToContent(
+          { id: req.id, method: '_element-rect', params: { selector: p.selector } },
+          tabId,
+        )) as ElementRectInfo;
+        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+          format: format as 'png' | 'jpeg',
+        });
+        const data = await cropScreenshot(dataUrl, rectInfo, format);
+        return { sessionId: req.sessionId, tabId, context: await contextOf(tabId), data: { data } };
+      }
       const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
         format: format as 'png' | 'jpeg',
       });
@@ -370,25 +414,46 @@ function unwrapContentReply(reply: ContentResult | undefined, id: string): unkno
   return reply.result;
 }
 
-function handleServerEvent(event: EventMessage): void {
-  if (event.event === 'approval.requested') {
-    const p = event.params as {
-      requestId: string;
-      method: string;
-      summary: string;
-      sessionId?: string;
-    };
-    pendingApprovals.push({
-      requestId: p.requestId,
-      method: p.method,
-      summary: p.summary,
-      sessionId: p.sessionId,
-    });
-  }
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+/** captureVisibleTab 的 dataUrl 按元素 rect 裁剪（OffscreenCanvas，SW 可用）。 */
+async function cropScreenshot(
+  dataUrl: string,
+  rectInfo: ElementRectInfo,
+  format: string,
+): Promise<string> {
+  const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  const crop = computeCropRect(rectInfo.rect, rectInfo.devicePixelRatio, rectInfo.viewport, {
+    width: bitmap.width,
+    height: bitmap.height,
+  });
+  if (crop.width === 0 || crop.height === 0) {
+    bitmap.close();
+    throw code('TARGET_NOT_FOUND', 'element is outside the visible viewport');
+  }
+  const canvas = new OffscreenCanvas(crop.width, crop.height);
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) {
+    bitmap.close();
+    throw code('INTERNAL', 'cannot create 2d canvas context');
+  }
+  ctx.drawImage(bitmap, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+  bitmap.close();
+  const blob = await canvas.convertToBlob({
+    type: format === 'jpeg' ? 'image/jpeg' : 'image/png',
+  });
+  return toBase64(new Uint8Array(await blob.arrayBuffer()));
 }
 
 // ---------------------------------------------------------------------------
@@ -470,23 +535,6 @@ chrome.runtime.onMessage.addListener(
             retryDelayMs,
           } satisfies PopupResponse);
         })();
-        return true;
-      }
-      case 'approvals:list': {
-        sendResponse({ type: 'approvals', items: pendingApprovals } satisfies PopupResponse);
-        return true;
-      }
-      case 'approval:respond': {
-        pendingApprovals = pendingApprovals.filter((a) => a.requestId !== msg.requestId);
-        sendWire({
-          event: 'approval.respond',
-          params: { requestId: msg.requestId, approved: msg.approved },
-        });
-        sendResponse({
-          type: 'approval:ok',
-          requestId: msg.requestId,
-          approved: msg.approved,
-        } satisfies PopupResponse);
         return true;
       }
       default:

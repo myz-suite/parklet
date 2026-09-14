@@ -9,11 +9,11 @@ describe('method metadata', () => {
     expect(metaKeys).toEqual(methodList);
   });
 
-  it('classifies write access for HITL', () => {
+  it('classifies write access for each method', () => {
     const byAccess = (access: WriteAccess) =>
       METHODS.filter((m) => METHOD_META[m].writeAccess === access).sort();
 
-    // 写操作（HITL ask 模式下需要批准）
+    // 写操作
     expect(byAccess('always')).toEqual([
       'activate-tab',
       'back',

@@ -59,7 +59,7 @@ export class ExtensionHub extends EventEmitter {
     return this.latestTabId;
   }
 
-  /** 向扩展推送事件（如 approval.requested）。连接未就绪时静默丢弃。 */
+  /** 向扩展推送事件。连接未就绪时静默丢弃。 */
   sendEvent(event: EventMessage): void {
     if (this.conn !== undefined && this.authenticated) {
       this.conn.send(JSON.stringify(event));

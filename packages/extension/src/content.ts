@@ -1,4 +1,5 @@
 import { executeDomAction, parseSearchResults } from './dom/actions.js';
+import { getElementRect } from './dom/screenshot.js';
 import type { ContentCommand, ContentResult } from './shared/messages.js';
 
 /**
@@ -10,6 +11,9 @@ function handleInternal(method: string, params: Record<string, unknown>): unknow
   if (method === '_search-parse') {
     const limit = params.limit !== undefined ? Number(params.limit) : 10;
     return { results: parseSearchResults(document).slice(0, limit) };
+  }
+  if (method === '_element-rect') {
+    return getElementRect(document, String(params.selector));
   }
   throw Object.assign(new Error(`unknown internal method '${method}'`), { code: 'UNKNOWN_METHOD' });
 }

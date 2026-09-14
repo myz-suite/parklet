@@ -79,6 +79,28 @@ describe('validateParams', () => {
     expect(validateParams('wait', { condition: 'networkidle' }).success).toBe(true);
   });
 
+  it('validates extract params and rejects article+mode together', () => {
+    expect(
+      validateParams('extract', {
+        mode: 'structured',
+        selector: '#main',
+        offset: 0,
+        limit: 20,
+        depth: 2,
+        visibleOnly: true,
+      }).success,
+    ).toBe(true);
+    expect(validateParams('extract', { article: true, selector: 'article' }).success).toBe(true);
+    expect(validateParams('extract', { article: true, mode: 'text' }).success).toBe(false);
+    expect(validateParams('extract', { depth: -1 }).success).toBe(false);
+    expect(validateParams('extract', { limit: 0 }).success).toBe(false);
+  });
+
+  it('accepts a screenshot selector', () => {
+    expect(validateParams('screenshot', { selector: '#hero' }).success).toBe(true);
+    expect(validateParams('screenshot', { selector: '' }).success).toBe(false);
+  });
+
   it('accepts a 1-based search page and rejects non-positive pages', () => {
     expect(validateParams('search', { query: 'x', page: 2 }).success).toBe(true);
     expect(validateParams('search', { query: 'x' }).success).toBe(true);

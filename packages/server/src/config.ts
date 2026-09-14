@@ -6,7 +6,6 @@ import { join } from 'node:path';
 export const DEFAULT_PORT = 8787;
 export const DEFAULT_BIND = '127.0.0.1';
 export const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
-export const DEFAULT_APPROVAL_TIMEOUT_MS = 60_000;
 
 export interface ServerConfig {
   port: number;
@@ -20,7 +19,6 @@ export interface ServerConfig {
   enableEval: boolean;
   stateDir: string;
   commandTimeoutMs: number;
-  approvalTimeoutMs: number;
 }
 
 function envInt(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
@@ -67,7 +65,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     enableEval: env.PARKINGLOT_ENABLE_EVAL === '1',
     stateDir,
     commandTimeoutMs: envInt(env, 'PARKINGLOT_COMMAND_TIMEOUT_MS', DEFAULT_COMMAND_TIMEOUT_MS),
-    approvalTimeoutMs: envInt(env, 'PARKINGLOT_APPROVAL_TIMEOUT_MS', DEFAULT_APPROVAL_TIMEOUT_MS),
   };
 }
 

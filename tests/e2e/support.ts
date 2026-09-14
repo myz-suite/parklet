@@ -22,20 +22,23 @@ export async function startServer(): Promise<RunningServer> {
       ...process.env,
       PARKINGLOT_PORT: String(E2E_PORT),
       PARKINGLOT_STATE_DIR: stateDir,
-      PARKINGLOT_APPROVAL_TIMEOUT_MS: '1000',
     },
     stdio: 'ignore',
   });
   const url = `http://127.0.0.1:${E2E_PORT}`;
   // 等待 /api/status 可用
-  await waitFor(async () => {
-    try {
-      const res = await fetch(`${url}/api/status`);
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }, 10_000, 'server start');
+  await waitFor(
+    async () => {
+      try {
+        const res = await fetch(`${url}/api/status`);
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+    10_000,
+    'server start',
+  );
   const token = readFileSync(join(stateDir, 'token'), 'utf8').trim();
   return {
     url,
@@ -52,7 +55,10 @@ export async function startServer(): Promise<RunningServer> {
 }
 
 /** Playwright 扩展会话：持久上下文 + MV3 service worker。 */
-export async function launchExtensionContext(serverUrl: string, token: string): Promise<{
+export async function launchExtensionContext(
+  serverUrl: string,
+  token: string,
+): Promise<{
   context: BrowserContext;
   sw: Worker;
   profileDir: string;
@@ -61,10 +67,7 @@ export async function launchExtensionContext(serverUrl: string, token: string): 
   const context = await chromium.launchPersistentContext(profileDir, {
     channel: 'chromium',
     headless: true,
-    args: [
-      `--disable-extensions-except=${EXTENSION_PATH}`,
-      `--load-extension=${EXTENSION_PATH}`,
-    ],
+    args: [`--disable-extensions-except=${EXTENSION_PATH}`, `--load-extension=${EXTENSION_PATH}`],
   });
 
   let sw = context.serviceWorkers()[0];
@@ -79,11 +82,15 @@ export async function launchExtensionContext(serverUrl: string, token: string): 
   );
 
   // 等 server 看到扩展连接
-  await waitFor(async () => {
-    const res = await fetch(`${serverUrl}/api/status`);
-    const status = (await res.json()) as { extensionConnected?: boolean };
-    return status.extensionConnected === true;
-  }, 12_000, 'extension pairing');
+  await waitFor(
+    async () => {
+      const res = await fetch(`${serverUrl}/api/status`);
+      const status = (await res.json()) as { extensionConnected?: boolean };
+      return status.extensionConnected === true;
+    },
+    12_000,
+    'extension pairing',
+  );
   return { context, sw, profileDir };
 }
 
@@ -162,7 +169,14 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
       return;
     }
     if (url.pathname === '/api/echo') {
-      send(JSON.stringify({ ok: true, path: url.pathname, query: Object.fromEntries(url.searchParams) }), 'application/json');
+      send(
+        JSON.stringify({
+          ok: true,
+          path: url.pathname,
+          query: Object.fromEntries(url.searchParams),
+        }),
+        'application/json',
+      );
       return;
     }
     if (url.pathname === '/tall') {
@@ -172,9 +186,7 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
       );
       return;
     }
-    send(
-      '<html><body><h1>test home</h1><a href="/target-page">Learn more</a></body></html>',
-    );
+    send('<html><body><h1>test home</h1><a href="/target-page">Learn more</a></body></html>');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();

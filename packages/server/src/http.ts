@@ -11,8 +11,8 @@ import {
   type ProtocolError,
   type Response,
 } from '@parkinglot/protocol';
-import type { ApprovalManager } from './approval.js';
 import type { ServerConfig } from './config.js';
+import type { EventCache } from './event-cache.js';
 import type { Ledger } from './ledger.js';
 import type { Router } from './router.js';
 import type { SessionRegistry } from './session.js';
@@ -24,7 +24,7 @@ export interface HttpDeps {
   config: ServerConfig;
   router: Router;
   registry: SessionRegistry;
-  approval: ApprovalManager;
+  events: EventCache;
   ledger: Ledger;
   isExtensionOnline: () => boolean;
 }
@@ -33,7 +33,7 @@ export interface HttpDeps {
  * 轻量 HTTP 端点（Agent 可选通道，与 CLI 共用同一 Router）：
  * - GET  /api/status
  * - POST /api/command
- * - POST /api/approve/:requestId
+ * - GET  /api/events          （拉取 tab 生命周期事件并清空未读）
  * - GET  /api/ledger?tail=N
  */
 export function startHttp(deps: HttpDeps): HttpServer {
@@ -88,13 +88,25 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: HttpDeps)
         tabId: envelope.tabId,
       };
       const result = await deps.router.handle(request);
-      respondJson(res, 200, result);
+      // 成功响应附带未读事件数（供 CLI 展示；失败响应不带）
+      respondJson(
+        res,
+        200,
+        'result' in result
+          ? { ...result, result: { ...result.result, unreadCount: deps.events.unreadCount() } }
+          : result,
+      );
+      return;
+    }
+
+    if (req.method === 'GET' && path === '/api/events') {
+      respondJson(res, 200, deps.events.drain());
       return;
     }
 
     if (req.method === 'POST' && path === '/api/session') {
       const body = await readBody(req);
-      let payload: { action?: string; id?: string; mode?: 'auto' | 'ask' };
+      let payload: { action?: string; id?: string };
       try {
         payload = body === null ? {} : (JSON.parse(body) as typeof payload);
       } catch {
@@ -103,23 +115,6 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: HttpDeps)
       }
       const result = handleSessionAction(deps, payload);
       respondJson(res, 200, result);
-      return;
-    }
-
-    if (req.method === 'POST' && path.startsWith('/api/approve/')) {
-      const requestId = decodeURIComponent(path.slice('/api/approve/'.length));
-      const body = await readBody(req);
-      let approve = true;
-      if (body !== null) {
-        try {
-          approve = (JSON.parse(body) as { approve?: boolean }).approve ?? true;
-        } catch {
-          respondJson(res, 200, { ok: false, error: 'invalid body' });
-          return;
-        }
-      }
-      const found = deps.approval.respond(requestId, approve);
-      respondJson(res, 200, { ok: found, requestId, approved: approve });
       return;
     }
 
@@ -140,12 +135,12 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: HttpDeps)
 
 function handleSessionAction(
   deps: HttpDeps,
-  payload: { action?: string; id?: string; mode?: 'auto' | 'ask' },
+  payload: { action?: string; id?: string },
 ): Record<string, unknown> {
   const { registry } = deps;
   switch (payload.action) {
     case 'new': {
-      const session = registry.create({ mode: payload.mode ?? 'auto' });
+      const session = registry.create();
       return { ok: true, session };
     }
     case 'use': {
@@ -158,29 +153,21 @@ function handleSessionAction(
       if (!payload.id) return { ok: false, error: 'id required' };
       return { ok: registry.close(payload.id), removed: true };
     }
-    case 'mode': {
-      if (!payload.id) return { ok: false, error: 'id required' };
-      const ok = registry.setMode(payload.id, payload.mode ?? 'auto');
-      return ok
-        ? { ok: true, session: registry.get(payload.id) }
-        : { ok: false, error: `session ${payload.id} not found` };
-    }
     default:
       return {
         ok: false,
-        error: `unknown action '${String(payload.action)}' (expected new|use|close|mode)`,
+        error: `unknown action '${String(payload.action)}' (expected new|use|close)`,
       };
   }
 }
 
 function buildStatus(deps: HttpDeps): Record<string, unknown> {
-  const { config, registry, approval } = deps;
+  const { config, registry } = deps;
   return {
     server: { name: SERVER_NAME, protocol: PROTOCOL_NAME, protocolVersion: PROTOCOL_VERSION },
     extensionConnected: deps.isExtensionOnline(),
     sessions: registry.list(),
     defaultSessionId: registry.getDefault()?.id,
-    pendingApprovals: approval.list(),
     config: {
       bind: config.bind,
       port: config.port,
@@ -188,7 +175,6 @@ function buildStatus(deps: HttpDeps): Record<string, unknown> {
       disabledCommands: config.disabledCommands,
       enableEval: config.enableEval,
       commandTimeoutMs: config.commandTimeoutMs,
-      approvalTimeoutMs: config.approvalTimeoutMs,
     },
   };
 }

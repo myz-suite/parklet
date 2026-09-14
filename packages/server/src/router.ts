@@ -1,5 +1,4 @@
 import {
-  METHOD_META,
   ParkinglotError,
   PROTOCOL_VERSION,
   requestSchema,
@@ -10,7 +9,6 @@ import {
   type Request,
   type Response,
 } from '@parkinglot/protocol';
-import type { ApprovalManager } from './approval.js';
 import type { ServerConfig } from './config.js';
 import { isHostAllowed } from './config.js';
 import type { Ledger } from './ledger.js';
@@ -30,7 +28,6 @@ export interface RouterDeps {
   registry: SessionRegistry;
   hub: RouterHub;
   ledger: Ledger;
-  approval: ApprovalManager;
 }
 
 /** 需要解析 tab 目标的命令（goto 单独处理：无 session 时允许 extension 自选激活 tab）。 */
@@ -71,8 +68,8 @@ function extractHost(raw: unknown): string | undefined {
 }
 
 /**
- * 命令路由：校验 → 禁用检查 → 寻址 → HITL → 扩展在线检查 → 转发 → 归一化。
- * 每个命令（含 HITL 决策）写入命令账本。
+ * 命令路由：校验 → 禁用检查 → 寻址 → 扩展在线检查 → 转发 → 归一化。
+ * 每个命令写入命令账本。
  */
 export class Router {
   constructor(private readonly deps: RouterDeps) {}
@@ -197,38 +194,7 @@ export class Router {
       }
     }
 
-    // 6. HITL：ask 模式 + 写操作 → 挂起等待批准
-    const session = target?.sessionId ? this.deps.registry.get(target.sessionId) : undefined;
-    const writeAccess = METHOD_META[req.method].writeAccess;
-    if (writeAccess !== 'never' && session?.mode === 'ask') {
-      this.deps.ledger.record({ ...base, outcome: 'pending', sessionId: session.id });
-      const outcome = await this.deps.approval.request(req, session.id, (view) => {
-        // 推送 popup 批准队列
-        this.deps.hub.sendEvent({
-          event: 'approval.requested',
-          params: { ...view },
-        });
-      });
-      this.deps.ledger.record({
-        ...base,
-        outcome,
-        sessionId: session.id,
-        durationMs: Date.now() - startedAt,
-      });
-      if (outcome === 'timeout') {
-        return this.error(
-          'APPROVAL_TIMEOUT',
-          'approval timed out; operation was not executed',
-          req.id,
-          session.id,
-        );
-      }
-      if (outcome === 'denied') {
-        return this.error('APPROVAL_DENIED', 'operation rejected by user', req.id, session.id);
-      }
-    }
-
-    // 7. 扩展在线
+    // 6. 扩展在线
     if (!EXTENSION_FREE.has(req.method) && !this.deps.hub.isOnline()) {
       this.deps.ledger.record({
         ...base,
@@ -239,14 +205,14 @@ export class Router {
       return this.error('EXTENSION_OFFLINE', 'extension is not connected', req.id, req.sessionId);
     }
 
-    // 8. 不依赖扩展的命令：server 本地处理（ping / get-status）
+    // 7. 不依赖扩展的命令：server 本地处理（ping / get-status）
     if (EXTENSION_FREE.has(req.method)) {
       const local = this.handleLocal(req);
       this.deps.ledger.record({ ...base, outcome: 'ok', durationMs: Date.now() - startedAt });
       return local;
     }
 
-    // 9. 转发（携带解析后的寻址目标）
+    // 8. 转发（携带解析后的寻址目标）
     const wireReq: Request = {
       id: req.id,
       method: req.method,
@@ -256,8 +222,12 @@ export class Router {
     };
     const res = await this.deps.hub.sendRequest(wireReq, this.deps.config.commandTimeoutMs);
 
-    // 9. 归一化 + 会话状态回写
+    // 归一化 + 会话状态回写
     if ('error' in res) {
+      // 防御性回退：目标 tab 已不存在 → 解除 session 绑定（不重试本次命令，避免重复副作用）
+      if (res.error.code === 'SESSION_TAB_CLOSED' && wireReq.tabId !== undefined) {
+        this.deps.registry.unbindTab(wireReq.tabId);
+      }
       this.deps.ledger.record({
         ...base,
         outcome: 'error',
@@ -339,7 +309,6 @@ export class Router {
             disabledCommands: config.disabledCommands,
             enableEval: config.enableEval,
             commandTimeoutMs: config.commandTimeoutMs,
-            approvalTimeoutMs: config.approvalTimeoutMs,
           },
         },
       },

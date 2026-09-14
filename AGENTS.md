@@ -8,15 +8,15 @@ ParkingLot — Agent-controlled browser infrastructure. An AI agent drives a rea
 Agent ── CLI (plt) / HTTP ──▶ parkinglot-server (relay) ── WebSocket ──▶ parkinglot-extension (Chrome MV3) ──▶ pages
 ```
 
-Authoritative design: `docs/initial-plan.md` (protocol, command set, session/tab/navId continuity model, HITL, security, acceptance criteria).
+Authoritative design: `docs/initial-plan.md` (protocol, command set, session/tab/navId continuity model, security, acceptance criteria); v2 changes in `docs/v2-incremental-plan.md`.
 
 ## Repository (pnpm workspace)
 
-| Path                 | Package                 | Role                                                                 |
-| -------------------- | ----------------------- | -------------------------------------------------------------------- |
-| `packages/protocol`  | `@parkinglot/protocol`  | Message envelope, command set, common types, Zod validation          |
-| `packages/server`    | `@parkinglot/server`    | Relay daemon: WS server, CLI, session registry, HITL, command ledger |
-| `packages/extension` | `@parkinglot/extension` | Chrome MV3: WS client, content-script executor, popup console        |
+| Path                 | Package                 | Role                                                                        |
+| -------------------- | ----------------------- | --------------------------------------------------------------------------- |
+| `packages/protocol`  | `@parkinglot/protocol`  | Message envelope, command set, common types, Zod validation                 |
+| `packages/server`    | `@parkinglot/server`    | Relay daemon: WS server, CLI, session registry, event cache, command ledger |
+| `packages/extension` | `@parkinglot/extension` | Chrome MV3: WS client, content-script executor, popup console               |
 
 Project skills (already installed): `.agents/skills/` — bootstrapping, probing, challenge, review, agent-facing-doc, etc.
 
@@ -42,7 +42,7 @@ pnpm format         # prettier --write .
 
 ## Current status
 
-All 5 phases of `docs/initial-plan.md` are complete: workspace skeleton → protocol layer → parkinglot-server (relay/CLI/HITL/ledger) → parkinglot-extension (MV3) → parkinglot skill + E2E smoke. Everything is green (typecheck/test/build/lint/format; 108 unit tests + 10 E2E).
+All 5 phases of `docs/initial-plan.md` are complete, plus the v2 increment (`docs/v2-incremental-plan.md`): HITL removed, extract gained selector/structured/article (defuddle), fill/type input resolution, press combos, element screenshots, tab-close session fallback, and a tab-lifecycle event cache (`plt events`). Everything is green (typecheck/test/build/lint/format; 130 unit tests; E2E updated).
 
 To run the system end-to-end: `npm install -g @parkinglot/server` → `plt serve` → install the extension from the Chrome Web Store and pair it in the popup → use `plt <command>` (see `parkinglot` skill; protocol reference: `skills/parkinglot/references/protocol.md`). Agent side: `npx skills add myz-suite/parkinglot --skill parkinglot`. From source: `pnpm install && pnpm build` → `pnpm --filter @parkinglot/server start` + load `packages/extension/dist` unpacked.
 

@@ -15,17 +15,17 @@
 - **24 个命令**：导航（goto/back/forward/reload）、交互（click/click-text/fill/type/press/hover/select）、视图（scroll/screenshot）、提取（extract/page-info）、页面内网络（fetch/search）、标签页管理、等待、会话查询。
 - **真实登录态**：一切在你自己的浏览器会话中执行（cookie、登录、反爬环境），`fetch` 可携带登录态。
 - **连续性模型**：session / tab / navId + 每个响应的 `context` 快照，Agent 始终能自证页面是否已变化。
-- **Human-in-the-loop**：session 可切 `ask` 模式，写操作需经扩展 popup（或 `plt approve`）批准。
+- **标签页生命周期与自动回退**：server 缓存 `tab.created`/`tab.removed` 事件（`plt events`），session 的 tab 关闭后自动回退到最近激活 tab。
 - **可审计**：命令账本（JSON lines）实时记录，敏感字段自动脱敏（`plt logs`）。
 - **安全默认**：server 仅绑 `127.0.0.1` + token 配对；`eval` 默认禁用。
 
 ## 仓库结构（pnpm workspace）
 
-| 包                                             | 说明                                                                     |
-| ---------------------------------------------- | ------------------------------------------------------------------------ |
-| `packages/protocol` (`@parkinglot/protocol`)   | 共享协议：消息信封、命令全集、公共类型、Zod 校验                         |
-| `packages/server` (`@parkinglot/server`)       | relay 守护进程：WebSocket 服务端、`plt` CLI、session 注册、HITL、命令账本 |
-| `packages/extension` (`@parkinglot/extension`) | Chrome MV3 扩展：WebSocket 客户端、content script 执行器、popup 控制台   |
+| 包                                             | 说明                                                                          |
+| ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| `packages/protocol` (`@parkinglot/protocol`)   | 共享协议：消息信封、命令全集、公共类型、Zod 校验                              |
+| `packages/server` (`@parkinglot/server`)       | relay 守护进程：WebSocket 服务端、`plt` CLI、session 注册、事件缓存、命令账本 |
+| `packages/extension` (`@parkinglot/extension`) | Chrome MV3 扩展：WebSocket 客户端、content script 执行器、popup 控制台        |
 
 ## 前置条件
 
@@ -79,7 +79,6 @@ pair token: e59fd1316be7aa2fb839fd016fbe1b0b589ce08ee6af2db3
 npx skills add myz-suite/parkinglot --skill parkinglot
 ```
 
-
 ### 第 5 步：验证连接
 
 ```bash
@@ -108,31 +107,31 @@ plt logs --tail 20              # 命令账本
 
 全局选项：`--server <url>`（默认 `http://127.0.0.1:8787`）、`--json`（结构化输出）、`--timeout <ms>`（默认 30000）、`--session <id>`、`--path <file>`（screenshot 落盘）。
 
-| 命令                                                         | 说明                                         |
-| ------------------------------------------------------------ | -------------------------------------------- |
-| `plt status` / `plt ping`                                      | 扩展在线？server/协议版本                    |
-| `plt goto <url>`                                              | 导航（无 session 自动创建）                  |
-| `plt back` / `forward` / `reload`                             | 历史导航                                     |
-| `plt click <css>` / `plt click-text <text>`                    | 点击元素 / 按文本点击                        |
-| `plt fill <css> <value>`                                      | 填充输入框（整体替换）                       |
-| `plt type <css> <text>`                                       | 逐键输入                                     |
-| `plt press <key> [--selector <css>]`                          | 按键                                         |
-| `plt hover <css>`                                             | 悬停                                         |
-| `plt select <css> --value <v>`（或 `--label <l>`）            | 选择下拉项                                   |
-| `plt scroll <up\|down\|top\|bottom\|amount>`                  | 滚动                                         |
-| `plt screenshot [--path x.png] [--format png\|jpeg]`          | 截图（`--full` 为实验性）                    |
-| `plt extract [--limit N]`                                     | 页面可读文本（LLM 友好裁剪）                 |
-| `plt page-info`                                               | 页面 url/标题/视口/滚动                      |
-| `plt fetch <url> [--method] [--header "k: v"]… [--body]`      | 页面上下文网络请求（带登录态）               |
-| `plt search <query> [--engine google\|duckduckgo] [--page N]` | 搜索引擎结果（默认 google；google 支持分页） | 结果列表 + 页码 |
-| `plt tabs`                                                    | 列出标签页                                   |
-| `plt tab <id>` / `plt tab-new <url>` / `plt tab-close [id]`     | 切换 / 新建 / 关闭标签页                     |
-| `plt wait [--ms N \| --selector css \| --condition load]`     | 等待                                         |
-| `plt session list\|new\|use\|close\|mode`                     | session 管理                                 |
-| `plt logs [--tail N] [--follow]`                              | 命令账本                                     |
-| `plt approve <requestId>` / `plt deny <requestId>`             | 远程批准 / 拒绝 HITL 请求                    |
+| 命令                                                                                                                                                      | 说明                                               |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `plt status` / `plt ping`                                                                                                                                 | 扩展在线？server/协议版本                          |
+| `plt goto <url>`                                                                                                                                          | 导航（无 session 自动创建）                        |
+| `plt back` / `forward` / `reload`                                                                                                                         | 历史导航                                           |
+| `plt click <css>` / `plt click-text <text>`                                                                                                               | 点击元素 / 按文本点击                              |
+| `plt fill <css> <value>`                                                                                                                                  | 填充输入框（整体替换；可传 label/容器选择器）      |
+| `plt type <css> <text>`                                                                                                                                   | 逐键输入（可传 label/容器选择器）                  |
+| `plt press <key> [--selector <css>]`                                                                                                                      | 按键或组合键（如 `Control+c`）                     |
+| `plt hover <css>`                                                                                                                                         | 悬停                                               |
+| `plt select <css> --value <v>`（或 `--label <l>`）                                                                                                        | 选择下拉项                                         |
+| `plt scroll <up\|down\|top\|bottom\|amount>`                                                                                                              | 滚动                                               |
+| `plt screenshot [--path x.png] [--selector <css>]`                                                                                                        | 截图（元素截图需目标 tab active；`--full` 实验性） |
+| `plt extract [--selector <css>] [--mode text\|structured] [--article] [--depth N] [--offset N] [--limit N] [--max-chars N] [--visible-only] [--prettify]` | 文本 / DOM 树 / 文章正文                           |
+| `plt page-info`                                                                                                                                           | 页面 url/标题/视口/滚动                            |
+| `plt fetch <url> [--method] [--header "k: v"]… [--body]`                                                                                                  | 页面上下文网络请求（带登录态）                     |
+| `plt search <query> [--engine google\|duckduckgo] [--page N]`                                                                                             | 搜索引擎结果（默认 google；google 支持分页）       |
+| `plt tabs`                                                                                                                                                | 列出标签页                                         |
+| `plt tab <id>` / `plt tab-new <url>` / `plt tab-close [id]`                                                                                               | 切换 / 新建 / 关闭标签页                           |
+| `plt wait [--ms N \| --selector css \| --condition load]`                                                                                                 | 等待                                               |
+| `plt session list\|new\|use\|close`                                                                                                                       | session 管理                                       |
+| `plt logs [--tail N] [--follow]`                                                                                                                          | 命令账本                                           |
+| `plt events [--tail N]`                                                                                                                                   | tab 生命周期事件（拉取后清空未读）                 |
 
-退出码：`0` 成功 · `2` 参数错误 · `3` 目标/会话错误 · `4` 扩展离线 · `5` 审批未决/被拒 · `6` 超时 · `1` 其他。
+退出码：`0` 成功 · `2` 参数错误 · `3` 目标/会话错误 · `4` 扩展离线 · `6` 超时 · `1` 其他。
 
 ## 连续性模型（session / tab / navId）
 
@@ -146,18 +145,11 @@ plt extract                     # 同一 session，navId 不变
 plt click-text "Learn more"     # 页面导航到 iana.org → navId=2, url 变化 ← 立刻感知
 ```
 
-## Human-in-the-loop
+## 标签页事件与自动回退
 
-```bash
-plt session mode <id> --mode ask   # 该 session 进入 ask 模式（默认 auto）
-plt click-text "Delete"            # 写操作挂起，等待批准
-# 方式 A：扩展 popup 的批准队列点 ✔/✖
-# 方式 B：plt approve <requestId> / plt deny <requestId>（requestId 来自 plt status --json 或 /api/status）
-```
-
-- 只读命令（extract/tabs/page-info…）永不挂起。
-- 拒绝/超时（60s）默认不执行（fail-closed）。
-- 会话恢复 `plt session mode <id> --mode auto`。
+- session 绑定的 tab 被关闭后，server 主动解除绑定；下一条命令自动回退到**全局最近激活 tab**（不重试失败命令，避免重复副作用）。
+- 扩展上报 `tab.created` / `tab.removed`；server 内存缓存最近 100 条并维护未读数，命令响应会附带 `N new events` 提醒。
+- `plt events [--tail N]` 展示并清空未读；`GET /api/events` 为 HTTP 等价通道。
 
 ## 配置（server 环境变量）
 
@@ -177,8 +169,8 @@ plt click-text "Delete"            # 写操作挂起，等待批准
 # 查资料
 plt search "playwright vs puppeteer"
 plt goto https://github.com/...        # 从结果挑一个
-plt extract --limit 3000
-plt scroll down && plt extract --limit 3000
+plt extract --max-chars 3000
+plt scroll down && plt extract --max-chars 3000
 
 # 填表
 plt goto https://example.com/login
@@ -193,14 +185,14 @@ plt fetch https://api.github.com/user --header "Accept: application/json"
 
 ## 故障排查
 
-| 现象                                    | 处理                                                                                                                          |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `EXTENSION_OFFLINE`                     | 扩展未配对/掉线：打开 popup 确认 **Connected ✓**；server 是否在跑、token 是否一致                                             |
-| popup 点保存无反应                      | 扩展需重新加载：chrome://extensions → ParkingLot → 刷新按钮（每次 `pnpm build` 后都要）                                       |
+| 现象                                    | 处理                                                                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `EXTENSION_OFFLINE`                     | 扩展未配对/掉线：打开 popup 确认 **Connected ✓**；server 是否在跑、token 是否一致                                              |
+| popup 点保存无反应                      | 扩展需重新加载：chrome://extensions → ParkingLot → 刷新按钮（每次 `pnpm build` 后都要）                                        |
 | `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS` | 先 `plt extract` 看页面实际内容；改用更具体的 CSS selector                                                                     |
-| `SESSION_NOT_FOUND` / `No tab with id`  | session 指向的标签页被关闭：`plt session close <id>` 后重新 `plt goto`                                                          |
-| `TIMEOUT`                               | 页面慢：`--timeout 60000` 重试                                                                                                |
-| 命令作用到 Chrome 内部页报错            | content script 无法注入 `chrome://` / Web Store 页——先在普通网页上操作                                                        |
+| `SESSION_NOT_FOUND` / `No tab with id`  | session 指向的标签页被关闭：`plt session close <id>` 后重新 `plt goto`                                                         |
+| `TIMEOUT`                               | 页面慢：`--timeout 60000` 重试                                                                                                 |
+| 命令作用到 Chrome 内部页报错            | content script 无法注入 `chrome://` / Web Store 页——先在普通网页上操作                                                         |
 | `search` 结果为空/需更多                | 反爬/验证码：换 `--engine duckduckgo` 或 `plt goto` 直接访问；取更多结果用 `--page 2`（google 支持，duckduckgo 不支持 offset） |
 
 ## 安全须知
@@ -215,7 +207,7 @@ plt fetch https://api.github.com/user --header "Accept: application/json"
 ```bash
 pnpm install          # 安装依赖
 pnpm typecheck        # tsc --noEmit（三包）
-pnpm test             # vitest 单测（108 个用例）
+pnpm test             # vitest 单测（130 个用例）
 pnpm test:e2e         # Playwright E2E（需先 pnpm exec playwright install chromium；加载真实扩展跑配对/导航/连续性）
 pnpm build            # 编译 dist（server/protocol）+ esbuild 打包扩展
 pnpm lint / pnpm format

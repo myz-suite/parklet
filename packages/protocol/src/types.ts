@@ -32,6 +32,14 @@ export interface ElementInfo {
   box?: ElementBox;
 }
 
+/** extract structured 模式的 DOM 树节点。 */
+export interface DomNode {
+  tag: string;
+  attrs: Record<string, string>;
+  text?: string;
+  children: DomNode[];
+}
+
 export interface PageSnapshot {
   context: ContextSnapshot;
   visibleText: string;
@@ -46,12 +54,9 @@ export interface TabInfo {
   active: boolean;
 }
 
-export type SessionMode = 'auto' | 'ask';
-
 export interface SessionInfo {
   id: string;
   tabId?: number;
-  mode: SessionMode;
   createdAt: string;
   lastUsedAt: string;
 }

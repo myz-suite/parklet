@@ -76,7 +76,7 @@ plt session list|use|new|close
 
 ## 命令全集
 
-写操作标记供 HITL 使用：`always`=需批准；`never`=只读；`conditional`=视参数。
+写操作标记仅供审计/日志：`always`=写操作；`never`=只读；`conditional`=视参数。
 
 ### 导航
 
@@ -89,29 +89,51 @@ plt session list|use|new|close
 
 ### 交互
 
-| 命令         | 参数                                      | 返回 data                  | 写     |
-| ------------ | ----------------------------------------- | -------------------------- | ------ |
-| `click`      | `selector`（CSS）                         | `{ element: ElementInfo }` | always |
-| `click-text` | `text`（可见文本，模糊匹配+去重）         | `{ element }`              | always |
-| `fill`       | `selector`, `value`（整体替换）           | `{ element }`              | always |
-| `type`       | `selector`, `text`（逐键）                | `{ element }`              | always |
-| `press`      | `selector?`, `key`                        | `{ element }`              | always |
-| `hover`      | `selector`                                | `{ element }`              | always |
-| `select`     | `selector`, `value?`/`label?`（至少其一） | `{ element }`              | always |
+| 命令         | 参数                                                                          | 返回 data                  | 写     |
+| ------------ | ----------------------------------------------------------------------------- | -------------------------- | ------ |
+| `click`      | `selector`（CSS）                                                             | `{ element: ElementInfo }` | always |
+| `click-text` | `text`（可见文本，模糊匹配+去重）                                             | `{ element }`              | always |
+| `fill`       | `selector`, `value`（整体替换；selector 可指向 label/容器，自动解析到 input） | `{ element }`              | always |
+| `type`       | `selector`, `text`（逐键；selector 自动解析到 input）                         | `{ element }`              | always |
+| `press`      | `selector?`, `key`（Playwright 风格组合键，如 `Control+c`）                   | `{ element }`              | always |
+| `hover`      | `selector`                                                                    | `{ element }`              | always |
+| `select`     | `selector`, `value?`/`label?`（至少其一）                                     | `{ element }`              | always |
 
 ### 滚动 / 视图
 
 | 命令         | 参数                                                                   | 返回 data                  | 写     |
 | ------------ | ---------------------------------------------------------------------- | -------------------------- | ------ |
 | `scroll`     | `direction?`（up/down/top/bottom）、`amount?`、`selector?`（至少其一） | `{ viewport }`             | always |
-| `screenshot` | `format?`（png/jpeg）、`fullPage?`、`path?`                            | `{ data?: base64, path? }` | never  |
+| `screenshot` | `format?`（png/jpeg）、`fullPage?`、`selector?`（元素裁剪）、`path?`   | `{ data?: base64, path? }` | never  |
+
+> 元素截图（`selector`）要求目标 tab 是其窗口的 active tab，否则报 `TAB_NOT_ACTIVE`。元素不在 viewport 时会 instant 滚动后取 rect，并按 `devicePixelRatio`/缩放裁剪可见部分。目标非 active 时先用 `plt tab <id>` 激活，或省略 `selector`。
 
 ### 提取
 
-| 命令            | 参数                                             | 返回 data                                                 | 写    |
-| --------------- | ------------------------------------------------ | --------------------------------------------------------- | ----- |
-| `extract`       | `mode?`（text/structured）、`limit?`（字符裁剪） | `{ snapshot: PageSnapshot }`（可见文本+viewport+scrollY） | never |
-| `get-page-info` | —                                                | `{ url, title, viewport, scrollY }`                       | never |
+| 命令            | 参数                                | 返回 data                           | 写    |
+| --------------- | ----------------------------------- | ----------------------------------- | ----- |
+| `extract`       | 见下（text / structured / article） | 按结果 `mode` 判别的联合            | never |
+| `get-page-info` | —                                   | `{ url, title, viewport, scrollY }` | never |
+
+`extract` 参数（均可选）：
+
+- `mode`：`text`（默认）或 `structured`。
+- `article`：`true` → defuddle 正文提取。与 `mode` 互斥；此时 `selector` 作为 `contentSelector`。
+- `selector`：CSS；缺省时 text=整页、structured=`body`。
+- `offset` / `limit`：作用于**第一层列表**（selector 匹配多个时取匹配元素；只匹配一个时取其子元素）。`limit` 恒为元素计数。
+- `depth`：相对 root 的递归深度（不含 root）；默认 3，不设固定上限。
+- `visibleOnly`：过滤第一层列表中的不可见元素（子树保留结构）。
+- `maxChars`：text 模式每段字符截断（不传=不截断）。
+
+结果按 `mode` 判别：
+
+```ts
+type ExtractResult =
+  | { mode: 'text'; snapshot: PageSnapshot } // 无 selector，整页
+  | { mode: 'text'; texts: string[] } // 有 selector，按第一层元素
+  | { mode: 'structured'; nodes: DomNode[]; truncated?: boolean } // DOM 树（maxNodes=500 预算，BFS 截断）
+  | { mode: 'article'; content: string; title?; author?; site?; wordCount? };
+```
 
 ### 页面内网络（在真实页面上下文执行，带登录态）
 
@@ -150,20 +172,21 @@ plt session list|use|new|close
 | ------ | ------------ | ----------- | ------ |
 | `eval` | `expression` | `{ value }` | always |
 
-`eval` 需 `PARKINGLOT_ENABLE_EVAL=1` + session `mode: trust`，否则 `EVAL_DISABLED`。
+`eval` 默认禁用（在 `PARKINGLOT_DISABLED_COMMANDS` 中）；禁用时返回 `EVAL_DISABLED`。
 
 ## 事件（v1 最小集）
 
-| 事件                                             | 方向               | 触发                 | 用途                              |
-| ------------------------------------------------ | ------------------ | -------------------- | --------------------------------- |
-| `extension.connected` / `extension.disconnected` | server → extension | 扩展 WS 状态变化     | 日志、status                      |
-| `extension.tab-activated`                        | extension → server | 激活标签页           | server 维护"最近活跃 tab"兜底寻址 |
-| `page.navigated`                                 | extension → server | 主框架导航完成       | 审计、（未来）推送长驻 Agent      |
-| `approval.requested`                             | server → extension | 写操作进入 HITL 挂起 | popup 批准队列                    |
-| `approval.respond`                               | extension → server | popup 批准/拒绝      | server 回写 ApprovalManager       |
-| `approval.responded`                             | （保留）           | HITL 状态变化        | 未来事件流                        |
+| 事件                                             | 方向               | 触发             | 用途                              |
+| ------------------------------------------------ | ------------------ | ---------------- | --------------------------------- |
+| `extension.connected` / `extension.disconnected` | server → extension | 扩展 WS 状态变化 | 日志、status                      |
+| `extension.tab-activated`                        | extension → server | 激活标签页       | server 维护"最近活跃 tab"兜底寻址 |
+| `page.navigated`                                 | extension → server | 主框架导航完成   | 审计                              |
+| `tab.created`                                    | extension → server | 新建标签页       | server 事件缓存 / 未读数          |
+| `tab.removed`                                    | extension → server | 关闭标签页       | session tab 解绑 + 事件缓存       |
 
-`Network.*` 为扩展点：v1 不实现页面级网络事件。
+`tab.created` / `tab.removed` 内存缓存最近 100 条，由 `plt events` / `GET /api/events` 呈现；命令响应附带未读数。session 的 tab 被关闭后绑定清除，下一条命令回退到最近激活 tab。
+
+`Network.*` 为扩展点：不实现页面级网络事件。
 
 ## 错误码
 
@@ -174,9 +197,9 @@ plt session list|use|new|close
 | `SESSION_NOT_FOUND` / `SESSION_TAB_CLOSED`                                    | session 不存在 / session 的 tab 已关闭 |
 | `TIMEOUT`                                                                     | 命令超时（默认 30s）                   |
 | `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS`                                       | 定位器找不到 / 匹配多个元素            |
+| `TAB_NOT_ACTIVE`                                                              | 对非 active tab 做元素截图             |
 | `URL_INVALID` / `HOST_NOT_ALLOWED`                                            | URL 非法 / 域名不在白名单              |
 | `EVAL_DISABLED`                                                               | eval 未开启                            |
-| `PENDING_APPROVAL` / `APPROVAL_DENIED` / `APPROVAL_TIMEOUT`                   | HITL：待批准 / 拒绝 / 超时             |
 | `INTERNAL`                                                                    | 兜底错误                               |
 
 ## 校验原则（Postel's Law）
@@ -215,12 +238,17 @@ interface TabInfo {
 interface SessionInfo {
   id: string;
   tabId?: number;
-  mode: 'auto' | 'ask';
   createdAt: string;
   lastUsedAt: string;
 }
 interface Viewport {
   width: number;
   height: number;
+}
+interface DomNode {
+  tag: string;
+  attrs: Record<string, string>;
+  text?: string;
+  children: DomNode[];
 }
 ```

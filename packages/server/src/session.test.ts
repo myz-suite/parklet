@@ -17,10 +17,9 @@ afterEach(() => {
 });
 
 describe('SessionRegistry lifecycle', () => {
-  it('creates a session with pl- id and auto mode by default', () => {
+  it('creates a session with a pl- id', () => {
     const s = registry.create();
     expect(s.id).toMatch(/^pl-/);
-    expect(s.mode).toBe('auto');
     expect(registry.get(s.id)).toBeDefined();
   });
 
@@ -55,10 +54,9 @@ describe('SessionRegistry lifecycle', () => {
   });
 
   it('persists sessions and default across instances (state file)', () => {
-    const a = registry.create({ tabId: 7, mode: 'ask' });
+    const a = registry.create({ tabId: 7 });
     const reloaded = new SessionRegistry(dir);
     expect(reloaded.get(a.id)?.tabId).toBe(7);
-    expect(reloaded.get(a.id)?.mode).toBe('ask');
     expect(reloaded.getDefault()?.id).toBe(a.id);
   });
 
@@ -96,12 +94,38 @@ describe('SessionRegistry resolve (addressing priority)', () => {
     expect(() => registry.resolve({ sessionId: 'pl-missing' })).toThrowError(/not found/);
   });
 
-  it('throws SESSION_TAB_CLOSED when the session has no live tab', () => {
+  it('falls back to the latest active tab when the session tab is gone and rebinds', () => {
+    const s = registry.create({ tabId: 3 });
+    registry.unbindTab(3);
+    expect(registry.get(s.id)?.tabId).toBeUndefined();
+    expect(registry.resolve({ sessionId: s.id }, 11)).toEqual({ sessionId: s.id, tabId: 11 });
+    expect(registry.get(s.id)?.tabId).toBe(11);
+  });
+
+  it('throws EXTENSION_NO_TAB when neither the session tab nor latest tab is available', () => {
     const s = registry.create();
-    expect(() => registry.resolve({ sessionId: s.id })).toThrowError(/no live tab/);
+    expect(() => registry.resolve({ sessionId: s.id })).toThrowError(/no active tab to fall back/);
   });
 
   it('throws EXTENSION_NO_TAB when nothing is addressable', () => {
     expect(() => registry.resolve({})).toThrowError(/no tab targeted/);
+  });
+});
+
+describe('SessionRegistry unbindTab', () => {
+  it('clears every session bound to the removed tab', () => {
+    const a = registry.create({ tabId: 5 });
+    const b = registry.create({ tabId: 5 });
+    registry.create({ tabId: 6 });
+    registry.unbindTab(5);
+    expect(registry.get(a.id)?.tabId).toBeUndefined();
+    expect(registry.get(b.id)?.tabId).toBeUndefined();
+    expect(registry.list().filter((s) => s.tabId === 5)).toHaveLength(0);
+  });
+
+  it('is a no-op when no session matches', () => {
+    registry.create({ tabId: 5 });
+    expect(() => registry.unbindTab(99)).not.toThrow();
+    expect(registry.list()[0]?.tabId).toBe(5);
   });
 });

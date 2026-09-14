@@ -83,13 +83,24 @@ export const paramsSchemas = {
   screenshot: z.object({
     format: z.enum(['png', 'jpeg']).optional(),
     fullPage: z.boolean().optional(),
+    selector: z.string().min(1).optional(),
     path: z.string().optional(),
   }),
   // 提取
-  extract: z.object({
-    mode: z.enum(['text', 'structured']).optional(),
-    limit: z.number().int().positive().optional(),
-  }),
+  extract: z
+    .object({
+      mode: z.enum(['text', 'structured']).optional(),
+      article: z.boolean().optional(),
+      selector: z.string().min(1).optional(),
+      offset: z.number().int().nonnegative().optional(),
+      limit: z.number().int().positive().optional(),
+      depth: z.number().int().nonnegative().optional(),
+      visibleOnly: z.boolean().optional(),
+      maxChars: z.number().int().positive().optional(),
+    })
+    .refine((p) => !(p.article === true && p.mode !== undefined), {
+      message: 'extract 的 article 与 mode 互斥（article=true 时不可同时提供 mode）',
+    }),
   'get-page-info': noopSchema,
   // 页面内网络
   fetch: z.object({

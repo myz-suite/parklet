@@ -1,11 +1,6 @@
 import { rmSync } from 'node:fs';
 import { expect, test as base, type BrowserContext, type Page } from '@playwright/test';
-import {
-  command,
-  launchExtensionContext,
-  startServer,
-  startTestWeb,
-} from './support';
+import { command, launchExtensionContext, startServer, startTestWeb } from './support';
 
 export interface Session {
   serverUrl: string;
@@ -128,52 +123,6 @@ test('点击可见文本可真实导航（navId 递增）', async ({ session }) 
 });
 
 // ---------------------------------------------------------------------------
-// server HTTP 管理面 helper（session mode / approval）
-// ---------------------------------------------------------------------------
-
-async function sessionMode(
-  serverUrl: string,
-  sessionId: string,
-  mode: 'auto' | 'ask',
-): Promise<void> {
-  const res = await fetch(`${serverUrl}/api/session`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action: 'mode', id: sessionId, mode }),
-  });
-  const body = (await res.json()) as { ok?: boolean };
-  if (!body.ok) throw new Error(`session mode ${mode} failed for ${sessionId}`);
-}
-
-async function firstPendingRequestId(serverUrl: string, timeoutMs = 8_000): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const res = await fetch(`${serverUrl}/api/status`);
-    const status = (await res.json()) as {
-      pendingApprovals?: Array<{ requestId?: string }>;
-    };
-    const id = status.pendingApprovals?.[0]?.requestId;
-    if (id) return id;
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  throw new Error('no pending approval appeared');
-}
-
-async function respondApproval(
-  serverUrl: string,
-  requestId: string,
-  approve: boolean,
-): Promise<void> {
-  const res = await fetch(`${serverUrl}/api/approve/${encodeURIComponent(requestId)}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ approve }),
-  });
-  const body = (await res.json()) as { ok?: boolean };
-  if (!body.ok) throw new Error(`approve ${requestId}=${approve} failed`);
-}
-
-// ---------------------------------------------------------------------------
 // 用例（核心回归 + 补充）
 // ---------------------------------------------------------------------------
 
@@ -191,38 +140,10 @@ test('SW 保活：空闲超过回收阈值后仍在线（alarms 唤醒重连）'
   expect(ping2.data?.extensionConnected).toBe(true);
 });
 
-test('HITL：ask 模式写操作挂起，approve 执行 / deny 拒绝', async ({ session }) => {
-  const base = session.serverUrl;
-  // 先建默认 session 并切 ask
-  const seed = (await command(base, 'goto', { url: 'https://example.com' })) as {
-    sessionId?: string;
-  };
-  await session.page.waitForURL('https://example.com/**', { timeout: 20_000 });
-  expect(seed.sessionId).toMatch(/^pl-/);
-  await sessionMode(base, seed.sessionId!, 'ask');
-
-  // —— approve 路径：click 挂起（不带 tabId，走 ask session）→ 批准 → 执行成功
-  const clickPromise = command(base, 'click-text', { text: 'Learn more' });
-  const requestId = await firstPendingRequestId(base);
-  expect(requestId).toMatch(/^ap-/);
-  await respondApproval(base, requestId, true);
-  const clickRes = (await clickPromise) as { data?: { element?: { tag?: string } } };
-  expect(clickRes.data?.element?.tag).toBe('a');
-
-  // —— deny 路径：再发起写操作 → 拒绝 → APPROVAL_DENIED
-  const goto2Promise = command(base, 'goto', { url: 'https://example.com/blocked' });
-  const requestId2 = await firstPendingRequestId(base);
-  await respondApproval(base, requestId2, false);
-  await expect(goto2Promise).rejects.toThrow(/APPROVAL_DENIED/);
-});
-
 test('截图返回 base64 PNG 数据', async ({ session }) => {
-  const shot = (await command(
-    session.serverUrl,
-    'screenshot',
-    {},
-    { tabId: session.tabId },
-  )) as { data?: { data?: string } };
+  const shot = (await command(session.serverUrl, 'screenshot', {}, { tabId: session.tabId })) as {
+    data?: { data?: string };
+  };
   expect(shot.data?.data).toBeDefined();
   // PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A
   expect(Buffer.from(shot.data!.data!, 'base64').subarray(0, 8).toString('hex')).toBe(
@@ -288,12 +209,7 @@ test('scroll：滚动后 scrollY 真实变化', async ({ session }) => {
   try {
     await command(session.serverUrl, 'goto', { url: `${web.url}/tall` }, { tabId: session.tabId });
     await session.page.waitForURL(`${web.url}/tall`, { timeout: 20_000 });
-    await command(
-      session.serverUrl,
-      'scroll',
-      { direction: 'bottom' },
-      { tabId: session.tabId },
-    );
+    await command(session.serverUrl, 'scroll', { direction: 'bottom' }, { tabId: session.tabId });
     await new Promise((r) => setTimeout(r, 900)); // smooth 滚动落定
     const info = (await command(
       session.serverUrl,

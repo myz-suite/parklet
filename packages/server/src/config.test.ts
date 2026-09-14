@@ -23,7 +23,6 @@ describe('loadConfig', () => {
     expect(c.disabledCommands).toEqual(['eval']);
     expect(c.enableEval).toBe(false);
     expect(c.commandTimeoutMs).toBe(30_000);
-    expect(c.approvalTimeoutMs).toBe(60_000);
   });
 
   it('generates and persists a token to the state dir', () => {

@@ -24,12 +24,12 @@ Config via env (defaults safe): `PARKINGLOT_PORT=8787`, `PARKINGLOT_BIND=127.0.0
 ## 2. Commands (full reference: `references/protocol.md`)
 
 Navigation/state: `plt status`, `plt ping`, `plt goto <url>`, `plt back`, `plt forward`, `plt reload`
-Interact: `plt click <css>`, `plt click-text <text>`, `plt fill <css> <value>`, `plt type <css> <text>`, `plt press <key>`, `plt hover <css>`, `plt select <css> --value <v>`
-View: `plt scroll <up|down|top|bottom|amount>`, `plt screenshot --path out.png`
-Extract: `plt extract [--limit N]`, `plt page-info`, `plt tabs`, `plt tab <id>`, `plt tab-new <url>`, `plt tab-close`
+Interact: `plt click <css>`, `plt click-text <text>`, `plt fill <css> <value>`, `plt type <css> <text>`, `plt press <key|combo>` (e.g. `Control+c`), `plt hover <css>`, `plt select <css> --value <v>`
+View: `plt scroll <up|down|top|bottom|amount>`, `plt screenshot --path out.png [--selector <css>]`
+Extract: `plt extract [--selector <css>] [--mode text|structured] [--article] [--depth N] [--offset N] [--limit N] [--max-chars N] [--visible-only] [--prettify]`, `plt page-info`, `plt tabs`, `plt tab <id>`, `plt tab-new <url>`, `plt tab-close`
 Network in page: `plt fetch <url> [--method POST] [--header "k: v"] [--body ...]`, `plt search <query> [--engine google|duckduckgo] [--page N]` (default engine google; paging via --page)
 Wait/session: `plt wait [--ms N | --selector css | --condition load]`, `plt session list|new|use|close`
-Ops: `plt logs [--follow]`, `plt approve <requestId>` / `plt deny <requestId>`
+Ops: `plt logs [--follow]`, `plt events [--tail N]` (tab lifecycle events; clears the unread count)
 
 Global flags: `--server <url>`, `--json`, `--timeout <ms>`, `--session <id>`.
 
@@ -49,10 +49,10 @@ Authenticated API: `plt fetch https://api.example.com/me --header "Accept: appli
 ## 5. Troubleshooting
 
 - `EXTENSION_OFFLINE`: extension not paired. Check popup (green dot) and that server is running with the same token.
-- `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS`: selector/text not found or ambiguous — use `plt extract` first to learn the page, prefer a more specific CSS selector.
-- `PENDING_APPROVAL` / `APPROVAL_DENIED`: session runs in `ask` mode; user must approve in the popup (or `plt approve <id>`). Read-only commands never block.
+- `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS`: selector/text not found or ambiguous — use `plt extract` first to learn the page, prefer a more specific CSS selector. `fill`/`type` accept a label/container selector and resolve the input.
+- `TAB_NOT_ACTIVE`: element screenshot (`--selector`) needs the target tab active — `plt tab <id>` first, or omit `--selector`.
 - `TIMEOUT`: page slow — retry with `--timeout 60000`.
-- `SESSION_NOT_FOUND`: the session's tab was closed or the server restarted — create a new one with `plt goto`.
+- `SESSION_NOT_FOUND`: the session's tab was closed or the server restarted — create a new one with `plt goto`. If a session's tab is closed, later commands auto-fall back to the most recently active tab.
 
 ## 6. Security notes
 
