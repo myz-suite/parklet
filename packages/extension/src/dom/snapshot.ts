@@ -1,4 +1,6 @@
-import DefuddleModule from 'defuddle';
+// 核心包 `defuddle` 不含 markdown 转换器（markdown:true 会被静默忽略），
+// `defuddle/full` 才带 turndown 转换（代价：content.js 体积增加）。
+import DefuddleModule from 'defuddle/full';
 import type { DefuddleOptions } from 'defuddle';
 import type {
   ContextSnapshot,
@@ -14,6 +16,9 @@ interface ArticleParseResult {
   title?: string;
   author?: string;
   site?: string;
+  description?: string;
+  domain?: string;
+  language?: string;
   wordCount?: number;
 }
 type DefuddleConstructor = new (
@@ -222,6 +227,10 @@ function extractArticle(doc: Document, selector?: string): ExtractResult {
     ...(res.title ? { title: res.title } : {}),
     ...(res.author ? { author: res.author } : {}),
     ...(res.site ? { site: res.site } : {}),
+    ...(res.description ? { description: res.description } : {}),
+    ...(res.domain ? { domain: res.domain } : {}),
+    ...(res.language ? { language: res.language } : {}),
+    ...(doc.location?.href ? { url: doc.location.href } : {}),
     ...(res.wordCount ? { wordCount: res.wordCount } : {}),
   };
   return article;
@@ -242,19 +251,29 @@ export function extractPage(
   const matched =
     params.selector !== undefined ? Array.from(doc.querySelectorAll(params.selector)) : [doc.body];
   const layer = firstLayerElements(matched);
-  const sliced = sliceList(layer, params.offset, params.limit);
-  const filtered = params.visibleOnly === true ? sliced.filter(isVisible) : sliced;
+  // 先按 visibleOnly 过滤，再计算 total（分页前可用总数），最后 offset/limit 切片
+  const visible = params.visibleOnly === true ? layer.filter(isVisible) : layer;
+  const total = visible.length;
+  const sliced = sliceList(visible, params.offset, params.limit);
+  const pagination = {
+    total,
+    ...(params.offset !== undefined ? { offset: params.offset } : {}),
+    ...(params.limit !== undefined ? { limit: params.limit } : {}),
+  };
 
   if (mode === 'structured') {
-    const { nodes, truncated } = buildDomTree(filtered, params.depth ?? 3);
-    return truncated
-      ? { mode: 'structured', nodes, truncated: true }
-      : { mode: 'structured', nodes };
+    const { nodes, truncated } = buildDomTree(sliced, params.depth ?? 3);
+    return {
+      mode: 'structured',
+      nodes,
+      ...pagination,
+      ...(truncated ? { truncated: true } : {}),
+    };
   }
 
   if (params.selector !== undefined) {
-    const texts = filtered.map((el) => extractVisibleText(el, params.maxChars));
-    return { mode: 'text', texts };
+    const texts = sliced.map((el) => extractVisibleText(el, params.maxChars));
+    return { mode: 'text', texts, ...pagination };
   }
 
   return { mode: 'text', snapshot: buildPageSnapshot(doc, tabId, navId, params.maxChars) };

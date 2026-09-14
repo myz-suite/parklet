@@ -14,6 +14,7 @@ const common = {
   bundle: true,
   format: 'iife',
   target: ['chrome120'],
+  minify: true,
   sourcemap: true,
   logLevel: 'info',
 };
@@ -28,6 +29,11 @@ await Promise.all([
     ...common,
     entryPoints: [join(root, 'src/content.ts')],
     outfile: join(outdir, 'content.js'),
+  }),
+  build({
+    ...common,
+    entryPoints: [join(root, 'src/content-main.ts')],
+    outfile: join(outdir, 'content-main.js'),
   }),
   build({
     ...common,

@@ -1,6 +1,12 @@
 // @vitest-environment happy-dom
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { executeDomAction, parseKeyCombo, parseSearchResults, resolveInput } from './actions.js';
+import {
+  executeDomAction,
+  keyDef,
+  parseKeyCombo,
+  parseSearchResults,
+  resolveInput,
+} from './actions.js';
 
 beforeAll(() => {
   Element.prototype.getBoundingClientRect = () =>
@@ -127,6 +133,50 @@ describe('parseKeyCombo', () => {
       altKey: false,
       metaKey: false,
     });
+  });
+});
+
+describe('keyDef', () => {
+  it('maps named keys and printable characters', () => {
+    expect(keyDef('Enter')).toMatchObject({ key: 'Enter', code: 'Enter', keyCode: 13 });
+    expect(keyDef('ArrowDown')).toMatchObject({ keyCode: 40, code: 'ArrowDown' });
+    expect(keyDef('a')).toMatchObject({ key: 'a', code: 'KeyA', keyCode: 65, charCode: 97 });
+    expect(keyDef('3')).toMatchObject({ code: 'Digit3', keyCode: 51 });
+  });
+
+  it('throws INVALID_PARAMS for unknown multi-character keys', () => {
+    try {
+      keyDef('Hello world');
+    } catch (err) {
+      expect((err as { code?: string }).code).toBe('INVALID_PARAMS');
+    }
+  });
+});
+
+describe('press default actions', () => {
+  it('inserts a printable character into an input', async () => {
+    document.body.innerHTML = '<input id="t" />';
+    const el = document.getElementById('t') as HTMLInputElement;
+    el.focus();
+    await executeDomAction('press', { selector: '#t', key: 'a' }, document, 1, 0);
+    expect(el.value).toBe('a');
+  });
+
+  it('Backspace deletes the previous character', async () => {
+    document.body.innerHTML = '<input id="t" value="ab" />';
+    const el = document.getElementById('t') as HTMLInputElement;
+    el.focus();
+    await executeDomAction('press', { selector: '#t', key: 'Backspace' }, document, 1, 0);
+    expect(el.value).toBe('a');
+  });
+
+  it('Control+A selects the field content', async () => {
+    document.body.innerHTML = '<input id="t" value="hello" />';
+    const el = document.getElementById('t') as HTMLInputElement;
+    el.focus();
+    await executeDomAction('press', { selector: '#t', key: 'Control+a' }, document, 1, 0);
+    expect(el.selectionStart).toBe(0);
+    expect(el.selectionEnd).toBe(5);
   });
 });
 

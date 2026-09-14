@@ -99,6 +99,8 @@ plt session list|use|new|close
 | `hover`      | `selector`                                                                    | `{ element }`              | always |
 | `select`     | `selector`, `value?`/`label?`（至少其一）                                     | `{ element }`              | always |
 
+> `press` 接受 Playwright 风格按键/组合键（`Enter`、`ArrowDown`、`Control+c`、`Meta+s`、`Shift+Tab`、`Backspace`…），派发完整 `keydown`/`keypress`/`keyup` 序列并带 `key`/`code`/`keyCode`/`which`/`charCode`；同时模拟常见默认动作（可打印字符插入、Backspace/Delete、Ctrl/Cmd+A 全选、Enter 提交表单、输入框内移动光标）。MAIN world 内容脚本补齐旧属性 `keyCode`，使依赖它的页面（如 Google 建议）能响应。支持单字符与具名键；未知多字符键报 `INVALID_PARAMS`。注意仍是合成（不可信）事件，IME/富文本编辑器等与真人按键可能有差异。
+
 ### 滚动 / 视图
 
 | 命令         | 参数                                                                   | 返回 data                  | 写     |
@@ -130,10 +132,25 @@ plt session list|use|new|close
 ```ts
 type ExtractResult =
   | { mode: 'text'; snapshot: PageSnapshot } // 无 selector，整页
-  | { mode: 'text'; texts: string[] } // 有 selector，按第一层元素
-  | { mode: 'structured'; nodes: DomNode[]; truncated?: boolean } // DOM 树（maxNodes=500 预算，BFS 截断）
-  | { mode: 'article'; content: string; title?; author?; site?; wordCount? };
+  | { mode: 'text'; texts: string[]; total: number; offset?; limit? } // 有 selector，按第一层元素
+  | { mode: 'structured'; nodes: DomNode[]; total: number; offset?; limit?; truncated?: boolean } // DOM 树（maxNodes=500 预算，BFS 截断）
+  | {
+      mode: 'article';
+      content: string;
+      title?;
+      author?;
+      site?;
+      description?;
+      domain?;
+      language?;
+      url?;
+      wordCount?;
+    };
 ```
+
+selector 模式下 `total` 为第一层元素总数（`visibleOnly` 过滤后、分页前），Agent 可按 `offset`/`limit` 迭代到 `offset + nodes.length >= total`；传入时回显 `offset`/`limit`。
+
+`article` 使用 `defuddle/full` bundle，`content` 为 **Markdown**（核心包 `defuddle` 会静默忽略 `markdown: true`）；元数据以独立字段返回，CLI 以 YAML frontmatter 打印。
 
 ### 页面内网络（在真实页面上下文执行，带登录态）
 

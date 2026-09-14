@@ -66,6 +66,23 @@ describe('buildDomTree', () => {
 });
 
 describe('extractPage', () => {
+  it('structured returns total and echoes offset/limit', () => {
+    setup(`<div id="r">${'<i></i>'.repeat(5)}</div>`);
+    const res = extractPage(
+      document,
+      { mode: 'structured', selector: '#r', offset: 1, limit: 2 },
+      1,
+      0,
+    );
+    expect(res.mode).toBe('structured');
+    if (res.mode === 'structured') {
+      expect(res.total).toBe(5);
+      expect(res.offset).toBe(1);
+      expect(res.limit).toBe(2);
+      expect(res.nodes).toHaveLength(2);
+    }
+  });
+
   it('truncates text mode by maxChars', () => {
     setup(`<p>${'a'.repeat(300)}</p>`);
     const res = extractPage(document, { mode: 'text', maxChars: 100 }, 1, 0);

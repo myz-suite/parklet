@@ -132,17 +132,191 @@ export function parseKeyCombo(combo: string): KeyCombo {
   return { key, ctrlKey, shiftKey, altKey, metaKey };
 }
 
-function dispatchKey(target: Element, type: string, key: string, combo: KeyCombo): void {
-  target.dispatchEvent(
-    new KeyboardEvent(type, {
-      key,
-      ctrlKey: combo.ctrlKey,
-      shiftKey: combo.shiftKey,
-      altKey: combo.altKey,
-      metaKey: combo.metaKey,
-      bubbles: true,
-    }),
+interface KeyDef {
+  key: string;
+  code: string;
+  keyCode: number;
+  charCode: number;
+}
+
+const NAMED_KEYS: Record<string, KeyDef> = {
+  enter: { key: 'Enter', code: 'Enter', keyCode: 13, charCode: 13 },
+  tab: { key: 'Tab', code: 'Tab', keyCode: 9, charCode: 0 },
+  escape: { key: 'Escape', code: 'Escape', keyCode: 27, charCode: 0 },
+  esc: { key: 'Escape', code: 'Escape', keyCode: 27, charCode: 0 },
+  backspace: { key: 'Backspace', code: 'Backspace', keyCode: 8, charCode: 0 },
+  delete: { key: 'Delete', code: 'Delete', keyCode: 46, charCode: 0 },
+  arrowup: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38, charCode: 0 },
+  arrowdown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, charCode: 0 },
+  arrowleft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37, charCode: 0 },
+  arrowright: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, charCode: 0 },
+  home: { key: 'Home', code: 'Home', keyCode: 36, charCode: 0 },
+  end: { key: 'End', code: 'End', keyCode: 35, charCode: 0 },
+  pageup: { key: 'PageUp', code: 'PageUp', keyCode: 33, charCode: 0 },
+  pagedown: { key: 'PageDown', code: 'PageDown', keyCode: 34, charCode: 0 },
+  space: { key: ' ', code: 'Space', keyCode: 32, charCode: 32 },
+  control: { key: 'Control', code: 'ControlLeft', keyCode: 17, charCode: 0 },
+  shift: { key: 'Shift', code: 'ShiftLeft', keyCode: 16, charCode: 0 },
+  alt: { key: 'Alt', code: 'AltLeft', keyCode: 18, charCode: 0 },
+  meta: { key: 'Meta', code: 'MetaLeft', keyCode: 91, charCode: 0 },
+};
+
+/** 解析任意 Playwright 键名到 key/code/keyCode/charCode；未知多字符键抛 INVALID_PARAMS。 */
+export function keyDef(key: string): KeyDef {
+  if (key === ' ' || key.toLowerCase() === 'space') return NAMED_KEYS.space!;
+  const named = NAMED_KEYS[key.toLowerCase()];
+  if (named !== undefined) return named;
+  if (/^f\d{1,2}$/i.test(key)) {
+    const n = Number(key.slice(1));
+    return { key: `F${n}`, code: `F${n}`, keyCode: 111 + n, charCode: 0 };
+  }
+  if ([...key].length === 1) {
+    const ch = key;
+    const upper = ch.toUpperCase();
+    const code = /[a-z]/i.test(ch)
+      ? `Key${upper}`
+      : /[0-9]/.test(ch)
+        ? `Digit${ch}`
+        : `Key${upper}`;
+    return { key: ch, code, keyCode: upper.charCodeAt(0), charCode: ch.charCodeAt(0) };
+  }
+  fail(
+    'INVALID_PARAMS',
+    `unknown key '${key}' (use a single character or a named key like Enter/ArrowDown)`,
   );
+}
+
+function dispatchKeyboard(
+  target: Element,
+  type: string,
+  def: KeyDef,
+  combo: KeyCombo,
+  keyOverride?: string,
+): KeyboardEvent {
+  const event = new KeyboardEvent(type, {
+    key: keyOverride ?? def.key,
+    code: def.code,
+    ctrlKey: combo.ctrlKey,
+    shiftKey: combo.shiftKey,
+    altKey: combo.altKey,
+    metaKey: combo.metaKey,
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  });
+  // KeyboardEventInit 不接受 keyCode/which/charCode；挂到实例上以兼容依赖旧属性的页面。
+  const legacy: Record<string, number> = {
+    keyCode: def.keyCode,
+    which: def.keyCode,
+    charCode: def.charCode,
+  };
+  for (const [name, value] of Object.entries(legacy)) {
+    Object.defineProperty(event, name, { get: () => value });
+  }
+  target.dispatchEvent(event);
+  return event;
+}
+
+function editableOf(target: Element): HTMLInputElement | HTMLTextAreaElement | HTMLElement | null {
+  const tag = target.tagName.toLowerCase();
+  if (tag === 'input' || tag === 'textarea') return target as HTMLInputElement;
+  if ((target as HTMLElement).isContentEditable) return target as HTMLElement;
+  return null;
+}
+
+function fireInput(target: Element): void {
+  target.dispatchEvent(new InputEvent('input', { bubbles: true }));
+}
+
+/** 模拟按键的默认动作（合成事件不会触发原生默认行为）。 */
+function applyDefaultAction(
+  target: Element,
+  def: KeyDef,
+  combo: KeyCombo,
+  down: KeyboardEvent,
+): void {
+  if (down.defaultPrevented) return;
+  const editable = editableOf(target);
+  const shortcutModifier = combo.ctrlKey || combo.metaKey;
+
+  if (shortcutModifier && def.key.toLowerCase() === 'a') {
+    if (editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement)
+      editable.select();
+    else if (editable !== null) {
+      const range = document.createRange();
+      range.selectNodeContents(editable);
+      const selection = document.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+    return;
+  }
+
+  if ((def.key === 'Backspace' || def.key === 'Delete') && editable !== null) {
+    if (editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement) {
+      const start = editable.selectionStart ?? editable.value.length;
+      const end = editable.selectionEnd ?? start;
+      if (start !== end)
+        editable.value = editable.value.slice(0, start) + editable.value.slice(end);
+      else if (def.key === 'Backspace' && start > 0)
+        editable.value = editable.value.slice(0, start - 1) + editable.value.slice(start);
+      else if (def.key === 'Delete' && start < editable.value.length)
+        editable.value = editable.value.slice(0, start) + editable.value.slice(start + 1);
+      fireInput(editable);
+    }
+    return;
+  }
+
+  // 仅可打印键（单字符，如字母/数字/空格）插入文本；Enter 等具名键 charCode>0 但不应插入
+  if (
+    def.key.length === 1 &&
+    def.charCode > 0 &&
+    !shortcutModifier &&
+    !combo.altKey &&
+    editable !== null
+  ) {
+    // execCommand 会同步触发 input；失败则手动插入并补事件
+    let inserted = false;
+    try {
+      inserted = document.execCommand('insertText', false, def.key);
+    } catch {
+      inserted = false;
+    }
+    if (
+      !inserted &&
+      (editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement)
+    ) {
+      const start = editable.selectionStart ?? editable.value.length;
+      const end = editable.selectionEnd ?? start;
+      editable.value = editable.value.slice(0, start) + def.key + editable.value.slice(end);
+      editable.setSelectionRange(start + def.key.length, start + def.key.length);
+      fireInput(editable);
+    }
+    return;
+  }
+
+  if (def.key === 'Enter') {
+    const form = target.closest('form');
+    if (form !== null) {
+      try {
+        form.requestSubmit();
+      } catch {
+        form.submit();
+      }
+    }
+    return;
+  }
+
+  if (editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement) {
+    const move: Record<string, () => number> = {
+      ArrowLeft: () => Math.max(0, (editable.selectionStart ?? 0) - 1),
+      ArrowRight: () => Math.min(editable.value.length, (editable.selectionEnd ?? 0) + 1),
+      Home: () => 0,
+      End: () => editable.value.length,
+    };
+    const next = move[def.key];
+    if (next !== undefined) editable.setSelectionRange(next(), next());
+  }
 }
 
 export async function executeDomAction(
@@ -207,6 +381,7 @@ export async function executeDomAction(
     }
     case 'press': {
       const combo = parseKeyCombo(String(params.key ?? ''));
+      const def = keyDef(combo.key);
       const target =
         params.selector !== undefined
           ? findByCss(doc, String(params.selector)).element
@@ -219,11 +394,16 @@ export async function executeDomAction(
         { key: 'Meta', on: combo.metaKey },
       ];
       const pressed = modifiers.filter((m) => m.on);
-      for (const m of pressed) dispatchKey(target, 'keydown', m.key, combo);
-      dispatchKey(target, 'keydown', combo.key, combo);
-      dispatchKey(target, 'keypress', combo.key, combo);
-      dispatchKey(target, 'keyup', combo.key, combo);
-      for (const m of [...pressed].reverse()) dispatchKey(target, 'keyup', m.key, combo);
+      for (const m of pressed) dispatchKeyboard(target, 'keydown', keyDef(m.key), combo);
+      const down = dispatchKeyboard(target, 'keydown', def, combo);
+      // keypress 仅在“会产生文本”时触发（非 Ctrl/Meta 快捷键）
+      if (def.charCode > 0 && !combo.ctrlKey && !combo.metaKey) {
+        dispatchKeyboard(target, 'keypress', def, combo);
+      }
+      applyDefaultAction(target, def, combo, down);
+      dispatchKeyboard(target, 'keyup', def, combo);
+      for (const m of [...pressed].reverse())
+        dispatchKeyboard(target, 'keyup', keyDef(m.key), combo);
       return { element: toElementInfo(target) };
     }
     case 'hover': {

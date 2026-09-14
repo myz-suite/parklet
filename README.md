@@ -131,6 +131,8 @@ plt logs --tail 20              # 命令账本
 | `plt logs [--tail N] [--follow]`                                                                                                                          | 命令账本                                           |
 | `plt events [--tail N]`                                                                                                                                   | tab 生命周期事件（拉取后清空未读）                 |
 
+> `plt extract --article` 输出 defuddle 提取的 **Markdown** 正文，并带 `title`/`site`/`url`/`wordCount` 等 YAML frontmatter；`--mode structured --selector` 的结果含 `total`/`offset`/`limit` 便于分页。
+
 退出码：`0` 成功 · `2` 参数错误 · `3` 目标/会话错误 · `4` 扩展离线 · `6` 超时 · `1` 其他。
 
 ## 连续性模型（session / tab / navId）
@@ -207,7 +209,7 @@ plt fetch https://api.github.com/user --header "Accept: application/json"
 ```bash
 pnpm install          # 安装依赖
 pnpm typecheck        # tsc --noEmit（三包）
-pnpm test             # vitest 单测（130 个用例）
+pnpm test             # vitest 单测（136 个用例）
 pnpm test:e2e         # Playwright E2E（需先 pnpm exec playwright install chromium；加载真实扩展跑配对/导航/连续性）
 pnpm build            # 编译 dist（server/protocol）+ esbuild 打包扩展
 pnpm lint / pnpm format

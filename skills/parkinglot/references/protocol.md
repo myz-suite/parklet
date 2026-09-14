@@ -99,6 +99,8 @@ Write-access markers are advisory (audit/logging): `always` = write operation; `
 | `hover`      | `selector`                                                                                                      | `{ element }`              | always |
 | `select`     | `selector`, `value?`/`label?` (at least one)                                                                    | `{ element }`              | always |
 
+> `press` accepts a Playwright-style key or combo (`Enter`, `ArrowDown`, `Control+c`, `Meta+s`, `Shift+Tab`, `Backspace`, …). It dispatches the full `keydown`/`keypress`/`keyup` sequence with `key`/`code`/`keyCode`/`which`/`charCode`, and emulates common default actions (printable insert, Backspace/Delete, Ctrl/Cmd+A select-all, Enter form submit, input caret moves). A MAIN-world content script backfills legacy key codes so pages that read `keyCode` (e.g. Google suggestions) react. Single characters and named keys are supported; an unknown multi-character key returns `INVALID_PARAMS`. These are synthetic (untrusted) events — behavior can differ from real keystrokes for IME / rich editors.
+
 ### Scroll / View
 
 | Command      | Params                                                                   | Returns data               | Write  |
@@ -130,10 +132,25 @@ Result is discriminated by `mode`:
 ```ts
 type ExtractResult =
   | { mode: 'text'; snapshot: PageSnapshot } // no selector, whole page
-  | { mode: 'text'; texts: string[] } // with selector, per first-level element
-  | { mode: 'structured'; nodes: DomNode[]; truncated?: boolean } // DOM tree (maxNodes=500 budget, BFS truncation)
-  | { mode: 'article'; content: string; title?; author?; site?; wordCount? };
+  | { mode: 'text'; texts: string[]; total: number; offset?; limit? } // with selector, per first-level element
+  | { mode: 'structured'; nodes: DomNode[]; total: number; offset?; limit?; truncated?: boolean } // DOM tree (maxNodes=500 budget, BFS truncation)
+  | {
+      mode: 'article';
+      content: string;
+      title?;
+      author?;
+      site?;
+      description?;
+      domain?;
+      language?;
+      url?;
+      wordCount?;
+    };
 ```
+
+For selector-based results, `total` is the number of first-level elements (after `visibleOnly`, before paging), so an agent can iterate with `offset`/`limit` until `offset + nodes.length >= total`. `offset`/`limit` are echoed when provided.
+
+`article` uses the `defuddle/full` bundle and returns `content` as **Markdown** (the core `defuddle` bundle silently ignores `markdown: true`). Metadata is returned as separate fields; the CLI prints it as YAML frontmatter.
 
 ### In-page Network (executed in the real page context, with login state)
 

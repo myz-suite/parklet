@@ -1,3 +1,5 @@
+> **修复状态（2026-09-14）**：下方问题已全部定位并修复，配套本地 mock + E2E 复现/回归。根因、修复与测试见文末「修复记录」。
+
 ## 已验收的
 
 - ✅ plt events 能够查询事件列表。有事件也能可以在其他命令的输出里看到。
@@ -122,3 +124,46 @@ Settings
 {"ts":"2026-09-14T04:50:53.763Z","id":"c90eb1cd-9e1e-4b33-8578-5f40024ab5c6","method":"search","params":{"query":"hello world","page":1},"outcome":"error","code":"EXTENSION_OFFLINE","sessionId":"pl-3c60af04","tabId":1854130533,"durationMs":297}
 {"ts":"2026-09-14T04:51:58.583Z","id":"01beaab1-941f-42d0-bf77-180d49baa30a","method":"fetch","params":{"url":"https://wiki.kimleo.net/","method":"GET","headers":"[redacted]","returnType":"text"},"outcome":"error","code":"EXTENSION_OFFLINE","durationMs":1}
 ```
+
+## 修复记录（2026-09-14）
+
+本地 mock（`tests/e2e/support.ts` 的 `/search`、`/results`、`/list`、`/article`）复现全部问题；E2E 见 `tests/e2e/parkinglot.e2e.spec.ts`。
+
+### 1. `extract --article` 报 `INVALID_PARAMS`（已修复）
+
+- **根因**：CLI 的 `--mode` 默认值 `'text'` 被无条件写入 params，与 `article:true` 在 schema 层互斥（`.refine`）冲突；schema 是对的，错在 CLI 注入默认值。
+- **修复**：`plt extract` 的 `--mode` 去掉默认值，仅在显式传入时才发送（extension 侧仍默认 text）。
+- **测试**：E2E `extract --article 不再误报 INVALID_PARAMS`（spawn 真实 CLI）。
+
+### 2. `limit/offset` 无 total / 分页信息（已增强）
+
+- **根因**：`extract` 结果只返回切片后的 `nodes`/`texts`，没有总数列数，Agent 无法判断是否还有下一页。
+- **修复**：`ExtractResult` 的 structured 与 text-selector 分支新增 `total`（visibleOnly 过滤后、分页前的第一层元素总数），并在传入时回显 `offset`/`limit`；CLI 打印 `[showing X of TOTAL, offset=…, limit=…]`。
+- **测试**：E2E `extract structured 分页`；单测 `snapshot.test.ts`。
+
+### 3. `plt press` 无效（已修复）
+
+- **根因（两层）**：
+  1. 合成的 `KeyboardEvent` 没有 `keyCode`/`which`/`charCode`，依赖旧属性的站点（含 Google 建议）收不到；且 isolated world 里 `Object.defineProperty(event,'keyCode')` **无法跨 world 传给页面**（实测页面读到 `keyCode:0`）。
+  2. 不可信事件不触发原生默认动作（Enter 提交表单、⌘A 全选、Backspace 删除等）。
+- **修复**：
+  - 新增 **MAIN world** 内容脚本 `content-main.ts`（manifest `world:"MAIN"`，`document_start`），在主世界补全 `KeyboardEvent.prototype` 的 `keyCode`/`which`/`charCode` getter（可信事件取原生值，合成事件按 `key` 推导），不受页面 CSP 限制。
+  - content 侧 `press` 补全 `key/code/keyCode/which/charCode` 并模拟默认动作：单字符插入、Backspace/Delete、Ctrl/Cmd+A 全选、Enter 提交表单、输入框内箭头/Home/End 移动光标；未知多字符键（如误写 `press "Hello world"`）明确报 `INVALID_PARAMS`。
+- **测试**：E2E `press：ArrowDown(keyCode) 驱动页面 JS + Enter 触发表单提交`、`press Enter：普通表单提交`；单测 `keyDef`/`press default actions`。
+- **已知限制**：仍非原生可信事件；个别强依赖原生行为（如 IME、复杂富文本编辑器）可能与真人按键有差异。
+
+### 4. `search`/`fetch` 偶发 `EXTENSION_OFFLINE`（已修复）
+
+- **调查结论**：错误信息 `extension disconnected` 来自 server 的 `ws/server.ts` `resetConnection()`——即 WS 断开时正在途中的命令被拒。日志显示 04:50:29→04:51:58 约 90s 未恢复，而页面本身正常 → 指向 **MV3 service worker 空闲被回收**：`chrome.alarms`（30s 周期）本可唤醒重连，但浏览器后台/省电下 alarms 可能被延迟，形成较长离线窗口；协议级 WS ping/pong 由网络栈处理、不计入 SW 活动，无法保活。
+- **修复**：扩展侧新增**应用层心跳**：WS 在线时每 20s 发送一条 `{type:'heartbeat'}`。Chrome 116+ 中 WebSocket 收发消息会重置 SW 空闲计时器，从而避免回收；alarms 仅作兜底（并修正为 `ws===null` 时才重连，避免 CONNECTING 期重复建连）。
+- **server 侧评估**：单连接替换、握手鉴权、断线时挂起命令归一化为 `EXTENSION_OFFLINE` 均正确；`latestTabId` 在 server 内存中跨重连保留。当前策略是「离线即失败、由 Agent 重试」，未做服务端有界等待重连（可后续增强）。
+- **测试**：E2E `连接保活：空闲期间始终保持在线且真实命令可用`（70s 内持续轮询 `/api/status` 不应出现 offline，再用无重试的真实命令验证）、`重连：强制终止 SW 后自动重连`（测试用 CDP `ServiceWorker.stopAllWorkers` 后等 alarms 重连；生产代码不使用 CDP）。
+- **说明**：连接问题依赖真实浏览器 SW 生命周期，headless Chromium 下未必触发回收，E2E 作为回归护栏而非完全等价复现。
+
+### 5. `extract --article` 返回原始 HTML 而非 Markdown（已修复）
+
+- **现象**：`plt extract --article` 输出 `<div> <h2>…</h2> … </div>` 原始 HTML，而 `defuddle.md/<url>` 输出的是干净 Markdown + YAML frontmatter。
+- **根因**：扩展导入的是核心包 `defuddle`，其 **不包含 markdown 转换器**（`markdown: true` 被静默忽略，`content` 保持 HTML；`contentMarkdown` 为空）。经隔离验证：核心包 `markdown:true` 仍返回 HTML，`defuddle/full` 才带 turndown 转换。
+- **修复**：`snapshot.ts` 改用 `defuddle/full`（`markdown: true` 生效），`article` 结果新增 `description`/`domain`/`language`/`url` 字段，CLI 以 YAML frontmatter 打印。
+- **代价**：`defuddle/full` 含 turndown + 数学转换库；已开启 esbuild `minify`，`content.js` ≈755KB（未压缩时约 1.1MB），`background.js` ≈8KB。
+- **测试**：E2E `extract --article 不再误报 INVALID_PARAMS` 现断言输出为 Markdown（`**bold**`、`[link](…)`、无 `<p>`）且含 `title:`/`url:` frontmatter。

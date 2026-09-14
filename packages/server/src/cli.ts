@@ -191,19 +191,55 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
         snapshot?: { visibleText?: string; viewport?: { width: number; height: number } };
         texts?: string[];
         nodes?: unknown;
+        total?: number;
+        offset?: number;
+        limit?: number;
         truncated?: boolean;
         content?: string;
         title?: string;
+        author?: string;
+        site?: string;
+        description?: string;
+        domain?: string;
+        language?: string;
+        url?: string;
+        wordCount?: number;
       };
       if (ctx) console.log(ctx);
+      const shown = Array.isArray(d.texts)
+        ? d.texts.length
+        : Array.isArray(d.nodes)
+          ? d.nodes.length
+          : 0;
+      const range =
+        d.total !== undefined
+          ? `[showing ${shown} of ${d.total}${d.offset !== undefined ? `, offset=${d.offset}` : ''}${d.limit !== undefined ? `, limit=${d.limit}` : ''}]`
+          : undefined;
       if (d.mode === 'article') {
-        if (d.title) console.log(`# ${d.title}`);
+        const frontmatter: Array<[string, unknown]> = [
+          ['title', d.title],
+          ['author', d.author],
+          ['site', d.site],
+          ['domain', d.domain],
+          ['url', d.url],
+          ['language', d.language],
+          ['wordCount', d.wordCount],
+          ['description', d.description],
+        ];
+        const fields = frontmatter.filter(([, v]) => v !== undefined && v !== '');
+        if (fields.length > 0) {
+          console.log('---');
+          for (const [key, value] of fields) console.log(`${key}: ${String(value)}`);
+          console.log('---\n');
+        }
         console.log(d.content ?? '(no content)');
       } else if (Array.isArray(d.texts)) {
         d.texts.forEach((t, i) => console.log(`[${i + 1}] ${t}`));
+        if (range) console.log(range);
       } else if (d.nodes !== undefined) {
         console.log(opts.prettify ? JSON.stringify(d.nodes, null, 2) : JSON.stringify(d.nodes));
         if (d.truncated === true) console.log('(truncated at node budget)');
+        if (range) console.log(range);
       } else {
         console.log(d.snapshot?.visibleText ?? '(no text)');
         if (d.snapshot?.viewport)
@@ -513,7 +549,7 @@ export function buildProgram(): Command {
     }),
     (c) =>
       c
-        .option('--mode <m>', 'text|structured', 'text')
+        .option('--mode <m>', 'text|structured (default: text)')
         .option('--article', 'extract article body (defuddle)')
         .option('--selector <css>', 'CSS selector (first-level list)')
         .option('--depth <n>', 'structured recursion depth (default 3)')

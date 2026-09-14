@@ -140,7 +140,7 @@ export async function waitForExtensionOnline(serverUrl: string, timeoutMs: numbe
   }
 }
 
-/** 本地测试页：承载 /、/target-page、/form、/api/echo、/tall，供 E2E 稳定交互。 */
+/** 本地测试页：承载 /、/target-page、/form、/api/echo、/tall、/search、/results、/list、/article。 */
 export async function startTestWeb(): Promise<{ url: string; stop: () => void }> {
   const server = createServer((req, res) => {
     const send = (body: string, type = 'text/html; charset=utf-8') => {
@@ -186,6 +186,90 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
       );
       return;
     }
+    // 模拟搜索引擎：输入框 + 联想（keydown ArrowDown 填充）+ 原生表单提交（Enter）
+    if (url.pathname === '/search') {
+      send(`<!doctype html><html><body>
+<h1>Mock Search</h1>
+<form id="sf" method="get" action="/results">
+  <textarea id="q" name="q" rows="1"></textarea>
+  <button id="go" type="submit">Search</button>
+</form>
+<ul id="suggestions"></ul>
+<script>
+  const q = document.getElementById('q');
+  const ul = document.getElementById('suggestions');
+  const DATA = ['hello world', 'hello world python', 'hello world java', 'hello world c++'];
+  let active = -1;
+  function matches() { return DATA.filter((d) => d.includes(q.value.toLowerCase())); }
+  function render() {
+    ul.replaceChildren();
+    if (!q.value) { active = -1; return; }
+    for (const m of matches()) {
+      const li = document.createElement('li');
+      li.textContent = m;
+      li.dataset.value = m;
+      ul.appendChild(li);
+    }
+  }
+  q.addEventListener('input', render);
+  q.addEventListener('keydown', (e) => {
+    const list = matches();
+    if (e.keyCode === 40 && list.length > 0) {
+      active = Math.min(active + 1, list.length - 1);
+      q.value = list[active];
+      render();
+      e.preventDefault();
+    } else if (e.keyCode === 38 && list.length > 0) {
+      active = Math.max(active - 1, 0);
+      q.value = list[active];
+      render();
+      e.preventDefault();
+    }
+  });
+</script>
+</body></html>`);
+      return;
+    }
+    if (url.pathname === '/results') {
+      const query = url.searchParams.get('q') ?? '';
+      send(`<!doctype html><html><body>
+<h1>Mock Results</h1>
+<p id="query">Results for: ${query}</p>
+<ol id="results">
+  <li><a href="/target-page?r=1">Result one for ${query}</a></li>
+  <li><a href="/target-page?r=2">Result two for ${query}</a></li>
+</ol>
+</body></html>`);
+      return;
+    }
+    // 列表页：25 个 li，用于 offset/limit/total 分页验证
+    if (url.pathname === '/list') {
+      const items = Array.from(
+        { length: 25 },
+        (_, i) => `<li><a href="/item/${i}" title="Item ${i}">Item ${i}</a></li>`,
+      ).join('');
+      send(
+        `<!doctype html><html><body><article><ul id="list">${items}</ul></article></body></html>`,
+      );
+      return;
+    }
+    // 文章页：供 defuddle article 提取（含粗体/链接/列表，便于断言 markdown）
+    if (url.pathname === '/article') {
+      const para =
+        '<p>ParkingLot mock article body sentence explains how agents drive a real browser. </p>';
+      send(
+        `<!doctype html><html><head><title>Mock Article</title>` +
+          '<meta property="og:title" content="Mock Article Title">' +
+          '<meta name="description" content="A mock article for extraction tests."></head><body>' +
+          '<article id="main"><h1>Mock Article Title</h1>' +
+          para.repeat(8) +
+          '<p>A <strong>bold</strong> word and a <a href="https://example.com/docs">link</a>.</p>' +
+          '<ul><li>first point</li><li>second point</li></ul>' +
+          para.repeat(4) +
+          '</article></body></html>',
+      );
+      return;
+    }
     send('<html><body><h1>test home</h1><a href="/target-page">Learn more</a></body></html>');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -195,6 +279,25 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
     url: `http://127.0.0.1:${address.port}`,
     stop: () => server.close(),
   };
+}
+
+/** 运行编译后的 `plt` CLI（dist/cli.js），返回退出码与输出。 */
+export async function runCli(
+  serverUrl: string,
+  args: string[],
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      process.execPath,
+      [join(process.cwd(), 'packages/server/dist/cli.js'), '--server', serverUrl, ...args],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
+    proc.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+    proc.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
 }
 
 export async function waitFor(

@@ -273,20 +273,33 @@ export interface ElementActionResult {
 /**
  * extract 结果 = 按结果内 `mode` 判别的联合。
  * - `mode:'text'` + `snapshot`：无 selector，整页快照
- * - `mode:'text'` + `texts`：有 selector，每个匹配元素的文本
- * - `mode:'structured'` + `nodes`：DOM 树（可 `truncated`）
+ * - `mode:'text'` + `texts`：有 selector，每个匹配元素的文本（带 `total` 分页）
+ * - `mode:'structured'` + `nodes`：DOM 树（带 `total` 分页，可 `truncated`）
  * - `mode:'article'`：defuddle 正文（由 params.article=true 触发，与 params.mode 无关）
  */
 export type ExtractResult =
   | { mode: 'text'; snapshot: PageSnapshot }
-  | { mode: 'text'; texts: string[] }
-  | { mode: 'structured'; nodes: DomNode[]; truncated?: boolean }
+  | { mode: 'text'; texts: string[]; total: number; offset?: number; limit?: number }
+  | {
+      mode: 'structured';
+      nodes: DomNode[];
+      /** 第一层列表的元素总数（visibleOnly 过滤后、分页前） */
+      total: number;
+      offset?: number;
+      limit?: number;
+      truncated?: boolean;
+    }
   | {
       mode: 'article';
+      /** 正文（Markdown；defuddle/full 转换） */
       content: string;
       title?: string;
       author?: string;
       site?: string;
+      description?: string;
+      domain?: string;
+      language?: string;
+      url?: string;
       wordCount?: number;
     };
 

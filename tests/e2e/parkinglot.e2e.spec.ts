@@ -1,6 +1,13 @@
 import { rmSync } from 'node:fs';
 import { expect, test as base, type BrowserContext, type Page } from '@playwright/test';
-import { command, launchExtensionContext, startServer, startTestWeb } from './support';
+import {
+  command,
+  launchExtensionContext,
+  runCli,
+  startServer,
+  startTestWeb,
+  waitForExtensionOnline,
+} from './support';
 
 export interface Session {
   serverUrl: string;
@@ -126,18 +133,161 @@ test('点击可见文本可真实导航（navId 递增）', async ({ session }) 
 // 用例（核心回归 + 补充）
 // ---------------------------------------------------------------------------
 
-test('SW 保活：空闲超过回收阈值后仍在线（alarms 唤醒重连）', async ({ session }) => {
-  test.setTimeout(150_000);
-  const ping1 = (await command(session.serverUrl, 'ping', {})) as {
-    data?: { extensionConnected?: boolean };
-  };
-  expect(ping1.data?.extensionConnected).toBe(true);
-  // 超过 MV3 ~30s 回收阈值 + alarms 30s 周期：SW 被回收后由 alarms 唤醒重连
-  await new Promise((r) => setTimeout(r, 75_000));
-  const ping2 = (await command(session.serverUrl, 'ping', {})) as {
-    data?: { extensionConnected?: boolean };
-  };
-  expect(ping2.data?.extensionConnected).toBe(true);
+test('连接保活：空闲期间始终保持在线且真实命令可用', async ({ session }) => {
+  test.setTimeout(170_000);
+  const base = session.serverUrl;
+  const start = Date.now();
+  let firstOfflineAt: number | undefined;
+  // 70s 内持续轮询：不应出现任何 offline 窗口（应用层心跳防止 SW 空闲被回收）
+  while (Date.now() - start < 70_000) {
+    const res = await fetch(`${base}/api/status`);
+    const status = (await res.json()) as { extensionConnected?: boolean };
+    if (status.extensionConnected !== true && firstOfflineAt === undefined) {
+      firstOfflineAt = Date.now() - start;
+    }
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  expect(firstOfflineAt).toBeUndefined();
+  // 无重试的真实命令（ping 是 server-local，无法证明扩展链路）
+  const res = await fetch(`${base}/api/command`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ method: 'extract', params: {}, tabId: session.tabId }),
+  });
+  const env = (await res.json()) as { error?: { code?: string }; result?: unknown };
+  expect(env.error).toBeUndefined();
+  expect(env.result).toBeDefined();
+});
+
+test('重连：强制终止 SW 后自动重连（alarms 兜底）', async ({ session }) => {
+  test.setTimeout(120_000);
+  const browser = session.context.browser();
+  if (browser !== null) {
+    const cdp = await browser.newBrowserCDPSession();
+    await cdp.send('ServiceWorker.stopAllWorkers').catch(() => {});
+    await cdp.detach();
+  }
+  await waitForExtensionOnline(session.serverUrl, 60_000);
+  const res = await command(session.serverUrl, 'extract', {}, { tabId: session.tabId });
+  expect(res.data).toBeDefined();
+});
+
+test('extract --article 不再误报 INVALID_PARAMS', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    const goto = (await command(
+      session.serverUrl,
+      'goto',
+      { url: `${web.url}/article` },
+      { tabId: session.tabId },
+    )) as { sessionId?: string };
+    await session.page.waitForURL(`${web.url}/article`, { timeout: 20_000 });
+    expect(goto.sessionId).toBeDefined();
+
+    const res = await runCli(session.serverUrl, ['extract', '--article']);
+    expect(res.stderr).not.toContain('INVALID_PARAMS');
+    expect(res.code).toBe(0);
+    expect(res.stdout).toContain('ParkingLot mock article');
+    // 应为 Markdown 而非原始 HTML
+    expect(res.stdout).not.toContain('<p>');
+    expect(res.stdout).toContain('**bold**');
+    expect(res.stdout).toContain('[link](https://example.com/docs)');
+    // 元数据以 frontmatter 呈现
+    expect(res.stdout).toContain('title: Mock Article Title');
+    expect(res.stdout).toContain(`url: ${web.url}/article`);
+  } finally {
+    web.stop();
+  }
+});
+
+test('extract structured 分页：返回 total 并回显 offset/limit', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/list` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/list`, { timeout: 20_000 });
+
+    const page1 = (await command(
+      session.serverUrl,
+      'extract',
+      { mode: 'structured', selector: '#list', limit: 10 },
+      { tabId: session.tabId },
+    )) as { data?: { nodes?: unknown[]; total?: number; limit?: number; offset?: number } };
+    expect(page1.data?.total).toBe(25);
+    expect(page1.data?.nodes?.length).toBe(10);
+    expect(page1.data?.limit).toBe(10);
+
+    const page3 = (await command(
+      session.serverUrl,
+      'extract',
+      { mode: 'structured', selector: '#list', offset: 20, limit: 10 },
+      { tabId: session.tabId },
+    )) as { data?: { nodes?: unknown[]; total?: number; offset?: number } };
+    expect(page3.data?.total).toBe(25);
+    expect(page3.data?.offset).toBe(20);
+    expect(page3.data?.nodes?.length).toBe(5);
+  } finally {
+    web.stop();
+  }
+});
+
+test('press：ArrowDown(keyCode) 驱动页面 JS + Enter 触发表单提交', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(
+      session.serverUrl,
+      'goto',
+      { url: `${web.url}/search` },
+      { tabId: session.tabId },
+    );
+    await session.page.waitForURL(`${web.url}/search`, { timeout: 20_000 });
+
+    await command(
+      session.serverUrl,
+      'type',
+      { selector: '#q', text: 'hello world' },
+      { tabId: session.tabId },
+    );
+    await expect
+      .poll(async () => session.page.$$eval('#suggestions li', (els) => els.length))
+      .toBeGreaterThan(0);
+    expect(await session.page.evaluate(() => document.activeElement?.id)).toBe('q');
+
+    // 第一条 suggestion 与输入相同，ArrowDown 两次才切到不同建议
+    await command(session.serverUrl, 'press', { key: 'ArrowDown' }, { tabId: session.tabId });
+    await command(session.serverUrl, 'press', { key: 'ArrowDown' }, { tabId: session.tabId });
+    const val = await session.page.$eval('#q', (el) => (el as HTMLTextAreaElement).value);
+    expect(val).toContain('python');
+
+    await command(session.serverUrl, 'press', { key: 'Enter' }, { tabId: session.tabId });
+    await session.page.waitForURL(/\/results\?/, { timeout: 20_000 });
+    expect(await session.page.textContent('#query')).toContain('hello world python');
+  } finally {
+    web.stop();
+  }
+});
+
+test('press Enter：普通表单（input + submit）提交', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/form` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/form`, { timeout: 20_000 });
+    await command(
+      session.serverUrl,
+      'fill',
+      { selector: '#name', value: 'bob' },
+      { tabId: session.tabId },
+    );
+    await command(
+      session.serverUrl,
+      'press',
+      { selector: '#name', key: 'Enter' },
+      { tabId: session.tabId },
+    );
+    await session.page.waitForURL(`${web.url}/submitted?name=bob`, { timeout: 20_000 });
+    expect(await session.page.textContent('#greeting')).toBe('hello bob');
+  } finally {
+    web.stop();
+  }
 });
 
 test('截图返回 base64 PNG 数据', async ({ session }) => {

@@ -470,12 +470,26 @@ try {
   chrome.alarms.create('parkinglot-keepalive', { periodInMinutes: 0.5 });
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name !== 'parkinglot-keepalive') return;
-    if (ws === null || ws.readyState !== WebSocket.OPEN) {
-      void connect();
-    }
+    if (ws === null) void connect();
   });
 } catch (err) {
   console.error('[parkinglot] alarms unavailable:', err);
+}
+
+// 应用层心跳：Chrome 116+ 中 WebSocket 收发消息会重置 SW 空闲计时器，
+// 因此只要 WS 在线，每 20s 发一条即可避免 SW 被回收（alarms 仍作兜底）。
+// 注意：protocol-level ping/pong 由浏览器网络栈处理，不计入 SW 活动。
+const HEARTBEAT_INTERVAL_MS = 20_000;
+try {
+  setInterval(() => {
+    if (ws !== null && ws.readyState === WebSocket.OPEN) {
+      sendWire({ type: 'heartbeat', ts: Date.now() });
+    } else if (ws === null) {
+      void connect();
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+} catch (err) {
+  console.error('[parkinglot] heartbeat unavailable:', err);
 }
 
 // ---------------------------------------------------------------------------
