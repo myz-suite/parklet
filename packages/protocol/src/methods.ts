@@ -1,10 +1,12 @@
 import type {
   DomNode,
+  DomQueryMatch,
   ElementInfo,
+  FormInfo,
+  LinkInfo,
   PageSnapshot,
   SearchPagination,
   SearchResult,
-  SessionInfo,
   TabInfo,
   Viewport,
 } from './types.js';
@@ -27,12 +29,17 @@ export const METHODS = [
   'press',
   'hover',
   'select',
+  'selection',
   // 滚动 / 视图
   'scroll',
+  'scroll-to',
   'screenshot',
   // 提取
   'extract',
   'get-page-info',
+  'dom-query',
+  'links',
+  'forms',
   // 页面内网络
   'fetch',
   'search',
@@ -83,12 +90,23 @@ export const METHOD_META: Record<Method, MethodMeta> = {
   },
   hover: { writeAccess: 'always', summary: '悬停在元素上' },
   select: { writeAccess: 'always', summary: '选择下拉选项' },
+  selection: {
+    writeAccess: 'always',
+    summary: '按 selector 或可见文本选中页面文字并返回文本',
+  },
   // 滚动 / 视图
-  scroll: { writeAccess: 'always', summary: '滚动页面或元素' },
+  scroll: { writeAccess: 'always', summary: '滚动页面或元素（--selector 滚动元素内部）' },
+  'scroll-to': { writeAccess: 'always', summary: '滚动页面使元素进入视口' },
   screenshot: { writeAccess: 'never', summary: '截图（viewport、整页或指定元素）' },
   // 提取
   extract: { writeAccess: 'never', summary: '提取页面文本 / DOM 树 / 文章正文' },
   'get-page-info': { writeAccess: 'never', summary: '获取页面 URL/标题/视口/滚动位置' },
+  'dom-query': {
+    writeAccess: 'never',
+    summary: '按 CSS 或可见文本查询元素并返回概要（探索用）',
+  },
+  links: { writeAccess: 'never', summary: '枚举页面可见链接（按 href 分组）' },
+  forms: { writeAccess: 'never', summary: '枚举页面可见表单字段（按 form 分组）' },
   // 页面内网络
   fetch: { writeAccess: 'conditional', summary: '在页面上下文发起网络请求（带登录态）' },
   search: { writeAccess: 'never', summary: '用搜索引擎查询并返回结果列表' },
@@ -151,11 +169,22 @@ export interface SelectParams {
   label?: string;
 }
 
+export interface SelectionParams {
+  /** selector 或可见文本 text 至少提供其一 */
+  selector?: string;
+  text?: string;
+}
+
 export interface ScrollParams {
   /** direction 与 amount 二选一；提供 selector 则滚动该元素 */
   direction?: 'up' | 'down' | 'top' | 'bottom';
   amount?: number;
   selector?: string;
+}
+
+export interface ScrollToParams {
+  /** 滚动页面使该元素进入视口 */
+  selector: string;
 }
 
 export interface ScreenshotParams {
@@ -168,8 +197,8 @@ export interface ScreenshotParams {
 }
 
 export interface ExtractParams {
-  /** text：整页/分段文本；structured：DOM 树。默认 text。 */
-  mode?: 'text' | 'structured';
+  /** text：整页/分段文本；structured：DOM 树；html：按 selector 取 outerHTML。默认 text。 */
+  mode?: 'text' | 'structured' | 'html';
   /** article 模式（defuddle 正文提取）；与 mode 互斥；selector 同时提供时作为 contentSelector */
   article?: boolean;
   /** 提供 → 按 CSS 匹配；缺省 → 整页（text）/ body（structured）/ 自动检测（article） */
@@ -184,6 +213,36 @@ export interface ExtractParams {
   visibleOnly?: boolean;
   /** text 模式每段文本字符截断（替代 v1 limit 的角色） */
   maxChars?: number;
+  /** 提取前排除匹配该 CSS 的元素（及其子树） */
+  exclude?: string;
+}
+
+export interface DomQueryParams {
+  /** selector 或可见文本 text 至少提供其一 */
+  selector?: string;
+  text?: string;
+  /** 最多返回多少条（default 20） */
+  limit?: number;
+}
+
+export interface LinksParams {
+  /** 作用域，缺省整页 */
+  selector?: string;
+  /** 分页单位 = href 分组 */
+  offset?: number;
+  limit?: number;
+  /** 默认 true */
+  visibleOnly?: boolean;
+}
+
+export interface FormsParams {
+  /** 作用域，缺省整页 */
+  selector?: string;
+  /** 分页单位 = 字段（跨分组扁平计数） */
+  offset?: number;
+  limit?: number;
+  /** 默认 true */
+  visibleOnly?: boolean;
 }
 
 export interface FetchParams {
@@ -221,7 +280,8 @@ export interface WaitParams {
 }
 
 export interface EvalParams {
-  expression: string;
+  /** 完整脚本，必须包含 return；默认禁用（PARKINGLOT_ENABLE_EVAL=1 放行） */
+  script: string;
 }
 
 export interface ParamsMap {
@@ -238,12 +298,17 @@ export interface ParamsMap {
   press: PressParams;
   hover: HoverParams;
   select: SelectParams;
+  selection: SelectionParams;
   // 滚动 / 视图
   scroll: ScrollParams;
+  'scroll-to': ScrollToParams;
   screenshot: ScreenshotParams;
   // 提取
   extract: ExtractParams;
   'get-page-info': NoopParams;
+  'dom-query': DomQueryParams;
+  links: LinksParams;
+  forms: FormsParams;
   // 页面内网络
   fetch: FetchParams;
   search: SearchParams;
@@ -263,11 +328,31 @@ export interface ParamsMap {
 
 // ---------------------------------------------------------------------------
 // 每个命令返回的 data 部分。
-// sessionId / tabId / context 由信封统一携带（见 envelope.ts），data 只放命令特有结果。
+// sessionId 概念已移除：tabId / context 由信封统一携带（见 envelope.ts），data 只放命令特有结果。
 // ---------------------------------------------------------------------------
 
 export interface ElementActionResult {
   element: ElementInfo;
+}
+
+/** links 结果：分页作用在分组列表，total = 分组数。 */
+export interface LinksResult {
+  links: LinkInfo[];
+  total: number;
+  offset?: number;
+  limit?: number;
+  /** 采集阶段触碰硬上限（MAX_ITEMS）而被截断 */
+  truncated?: boolean;
+}
+
+/** forms 结果：分页作用在字段（跨分组扁平计数），total = 字段总数。 */
+export interface FormsResult {
+  forms: FormInfo[];
+  total: number;
+  offset?: number;
+  limit?: number;
+  /** 采集阶段触碰硬上限（MAX_ITEMS）而被截断 */
+  truncated?: boolean;
 }
 
 /**
@@ -275,6 +360,7 @@ export interface ElementActionResult {
  * - `mode:'text'` + `snapshot`：无 selector，整页快照
  * - `mode:'text'` + `texts`：有 selector，每个匹配元素的文本（带 `total` 分页）
  * - `mode:'structured'` + `nodes`：DOM 树（带 `total` 分页，可 `truncated`）
+ * - `mode:'html'` + `items`：按 selector 匹配元素的 `outerHTML`（带 `total` 分页）
  * - `mode:'article'`：defuddle 正文（由 params.article=true 触发，与 params.mode 无关）
  */
 export type ExtractResult =
@@ -288,6 +374,14 @@ export type ExtractResult =
       offset?: number;
       limit?: number;
       truncated?: boolean;
+    }
+  | {
+      mode: 'html';
+      /** 每个匹配元素的 outerHTML（第一层列表；无文本截断） */
+      items: string[];
+      total: number;
+      offset?: number;
+      limit?: number;
     }
   | {
       mode: 'article';
@@ -317,12 +411,17 @@ export interface ResultMap {
   press: ElementActionResult;
   hover: ElementActionResult;
   select: ElementActionResult;
+  selection: { text: string };
   // 滚动 / 视图
   scroll: { viewport: Viewport };
+  'scroll-to': ElementActionResult;
   screenshot: { data?: string; path?: string };
   // 提取
   extract: ExtractResult;
   'get-page-info': { url: string; title: string; viewport: Viewport; scrollY: number };
+  'dom-query': { matches: DomQueryMatch[]; total: number };
+  links: LinksResult;
+  forms: FormsResult;
   // 页面内网络
   fetch: {
     status: number;
@@ -342,11 +441,11 @@ export interface ResultMap {
   ping: { pong: 'pong'; protocolVersion: string; extensionConnected: boolean };
   'get-status': {
     extensionConnected: boolean;
-    sessions: SessionInfo[];
+    currentTabId?: number;
     config: Record<string, unknown>;
   };
   // 高级
-  eval: { value: unknown };
+  eval: { value?: unknown };
 }
 
 export type ParamsOf<M extends Method> = ParamsMap[M];

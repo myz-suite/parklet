@@ -297,7 +297,7 @@ async function contextOf(tabId: number): Promise<ContextSnapshot> {
 }
 
 /** 扩展侧 wire 结果：动态命令分发，不逐命令强类型（协议层已保证形状）。 */
-type WireResult = { sessionId?: string; tabId?: number; context?: ContextSnapshot; data: unknown };
+type WireResult = { tabId?: number; context?: ContextSnapshot; data: unknown };
 
 /** sendToContent 使用的请求形状（含内部方法 _search-parse）。 */
 interface WireRequest {
@@ -306,7 +306,7 @@ interface WireRequest {
   params?: unknown;
 }
 
-/** chrome.tabs 的"tab 已不存在"错误文案（不同路径措辞略有差异），统一映射为 SESSION_TAB_CLOSED。 */
+/** chrome.tabs 的"tab 已不存在"错误文案（不同路径措辞略有差异），统一映射为 TAB_CLOSED。 */
 const TAB_GONE_RE = /no tab with id|invalid tab id|no tab with id:|tab was closed/i;
 
 function normalizeError(err: unknown): { code: ProtocolError['error']['code']; message: string } {
@@ -316,7 +316,7 @@ function normalizeError(err: unknown): { code: ProtocolError['error']['code']; m
     return { code: e.code as ProtocolError['error']['code'], message };
   }
   if (TAB_GONE_RE.test(message)) {
-    return { code: 'SESSION_TAB_CLOSED', message };
+    return { code: 'TAB_CLOSED', message };
   }
   return { code: 'INTERNAL', message };
 }
@@ -344,7 +344,6 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
     case 'list-tabs': {
       const tabs = await chrome.tabs.query({});
       return {
-        sessionId: req.sessionId,
         tabId,
         data: {
           tabs: tabs.map((t) => ({
@@ -361,7 +360,6 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
       const tab = await chrome.tabs.create({ url });
       bumpNavId(tab.id ?? -1);
       return {
-        sessionId: req.sessionId,
         tabId: tab.id ?? -1,
         context: await contextOf(tab.id ?? -1),
         data: {
@@ -377,14 +375,13 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
     case 'close-tab': {
       const target = (req.params as { tabId?: number }).tabId ?? tabId;
       await chrome.tabs.remove(target);
-      return { sessionId: req.sessionId, tabId, data: {} };
+      return { tabId, data: {} };
     }
     case 'activate-tab': {
       const target = (req.params as { tabId: number }).tabId;
       await chrome.tabs.update(target, { active: true });
       const tab = await chrome.tabs.get(target);
       return {
-        sessionId: req.sessionId,
         tabId: target,
         context: await contextOf(target),
         data: {
@@ -418,13 +415,13 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
           format: format as 'png' | 'jpeg',
         });
         const data = await cropScreenshot(dataUrl, rectInfo, format);
-        return { sessionId: req.sessionId, tabId, context: await contextOf(tabId), data: { data } };
+        return { tabId, context: await contextOf(tabId), data: { data } };
       }
       const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
         format: format as 'png' | 'jpeg',
       });
       const data = dataUrl.split(',')[1] ?? dataUrl;
-      return { sessionId: req.sessionId, tabId, context: await contextOf(tabId), data: { data } };
+      return { tabId, context: await contextOf(tabId), data: { data } };
     }
     default:
       break;
@@ -439,7 +436,7 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
   ) {
     await sendToContent(req, tabId);
     await waitForNavigation(tabId);
-    return { sessionId: req.sessionId, tabId, context: await contextOf(tabId), data: {} };
+    return { tabId, context: await contextOf(tabId), data: {} };
   }
 
   // search：导航到搜索引擎 → 等待 → 解析结果页
@@ -447,8 +444,83 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
     return handleSearch(req, tabId);
   }
 
+  // eval：必须在 MAIN world 执行（隔离世界的 new Function 被扩展 CSP 阻断）
+  if (req.method === 'eval') {
+    return handleEval(req, tabId);
+  }
+
   const data = await sendToContent(req, tabId);
-  return { sessionId: req.sessionId, tabId, context: await contextOf(tabId), data };
+  return { tabId, context: await contextOf(tabId), data };
+}
+
+/** eval 的注入结果（由 MAIN world 函数返回，需可 JSON 序列化回 SW）。 */
+interface EvalOutcome {
+  ok: boolean;
+  value?: unknown;
+  code?: string;
+  message?: string;
+}
+
+/**
+ * 在页面 **MAIN world** 执行 eval。注入函数必须自包含（Chrome 序列化函数体，无法引用外部导入）。
+ * 隔离世界的 `new Function` 被 MV3 扩展 CSP 恒定为不允许 `unsafe-eval` 阻断（已用真实 Chromium 验证）；
+ * MAIN world 不受扩展 CSP 约束、但**受页面 CSP 约束**：严格 CSP 站点会返回错误。
+ */
+async function handleEval(req: Request, tabId: number): Promise<WireResult> {
+  const script = String((req.params as { script?: unknown }).script ?? '');
+  let outcome: EvalOutcome | undefined;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: injectedEval,
+      args: [script],
+    });
+    outcome = results[0]?.result as EvalOutcome | undefined;
+  } catch (err) {
+    throw code('INTERNAL', `eval injection failed (page CSP?): ${(err as Error).message}`);
+  }
+  if (outcome === undefined || outcome.ok !== true) {
+    throw code(
+      (outcome?.code ?? 'INTERNAL') as ProtocolError['error']['code'],
+      outcome?.message ?? 'eval failed',
+    );
+  }
+  const data = outcome.value === undefined ? {} : { value: outcome.value };
+  return { tabId, context: await contextOf(tabId), data };
+}
+
+/** 自包含注入函数（MAIN world）。用 `new Function` 编译用户脚本，必须含 `return`。 */
+function injectedEval(script: string): Promise<EvalOutcome> {
+  return (async (): Promise<EvalOutcome> => {
+    let run: () => Promise<unknown>;
+    try {
+      run = new Function(
+        `"use strict"; return (async () => {\n${script}\n})();`,
+      ) as () => Promise<unknown>;
+    } catch (err) {
+      const isSyntax = err instanceof SyntaxError;
+      return {
+        ok: false,
+        code: isSyntax ? 'INVALID_PARAMS' : 'INTERNAL',
+        message: isSyntax
+          ? `eval script is not valid JavaScript: ${String(err)}`
+          : `eval blocked: ${String(err)}`,
+      };
+    }
+    try {
+      const value = await run();
+      if (value === undefined) return { ok: true };
+      try {
+        // 以 JSON 往返为唯一可序列化判据
+        return { ok: true, value: JSON.parse(JSON.stringify(value)) as unknown };
+      } catch (err) {
+        return { ok: false, code: 'NOT_SERIALIZABLE', message: String(err) };
+      }
+    } catch (err) {
+      return { ok: false, code: 'INTERNAL', message: (err as Error)?.message ?? String(err) };
+    }
+  })();
 }
 
 async function handleSearch(req: Request, tabId: number): Promise<WireResult> {
@@ -462,7 +534,6 @@ async function handleSearch(req: Request, tabId: number): Promise<WireResult> {
     tabId,
   )) as { results: SearchResult[] };
   return {
-    sessionId: req.sessionId,
     tabId,
     context: await contextOf(tabId),
     data: {

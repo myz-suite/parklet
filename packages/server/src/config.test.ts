@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { isHostAllowed, loadConfig } from './config.js';
+import { isHostAllowed, loadConfig, resolveDisabledCommands } from './config.js';
 
 let dir: string;
 
@@ -51,13 +51,49 @@ describe('loadConfig', () => {
     expect(c.bind).toBe('0.0.0.0');
     expect(c.allowedHosts).toEqual(['example.com', 'api.github.com']);
     expect(c.disabledCommands).toEqual(['eval', 'fetch']);
-    expect(c.enableEval).toBe(true);
+    // 显式禁用 eval 优先于 ENABLE_EVAL → 最终不可用
+    expect(c.enableEval).toBe(false);
     expect(c.commandTimeoutMs).toBe(5000);
   });
 
   it('rejects invalid ports with a fallback', () => {
     const c = loadConfig({ PARKINGLOT_STATE_DIR: dir, PARKINGLOT_PORT: 'not-a-number' });
     expect(c.port).toBe(8787);
+  });
+});
+
+describe('resolveDisabledCommands (eval gate)', () => {
+  it('disables eval by default', () => {
+    expect(resolveDisabledCommands({})).toEqual(['eval']);
+  });
+
+  it('enables eval when PARKINGLOT_ENABLE_EVAL=1', () => {
+    expect(resolveDisabledCommands({ PARKINGLOT_ENABLE_EVAL: '1' })).toEqual([]);
+  });
+
+  it('explicit disable wins over PARKINGLOT_ENABLE_EVAL', () => {
+    expect(
+      resolveDisabledCommands({
+        PARKINGLOT_DISABLED_COMMANDS: 'eval, fetch',
+        PARKINGLOT_ENABLE_EVAL: '1',
+      }),
+    ).toEqual(['eval', 'fetch']);
+  });
+
+  it('keeps eval disabled when a non-empty disable list omits it (breaking fix)', () => {
+    expect(resolveDisabledCommands({ PARKINGLOT_DISABLED_COMMANDS: 'fetch' })).toEqual([
+      'fetch',
+      'eval',
+    ]);
+  });
+
+  it('enables eval with a non-eval disable list when explicitly opted in', () => {
+    expect(
+      resolveDisabledCommands({
+        PARKINGLOT_DISABLED_COMMANDS: 'fetch',
+        PARKINGLOT_ENABLE_EVAL: '1',
+      }),
+    ).toEqual(['fetch']);
   });
 });
 

@@ -92,4 +92,56 @@ describe('extractPage', () => {
       expect(res.snapshot.visibleText.endsWith('…')).toBe(true);
     }
   });
+
+  it('html returns outerHTML of matched elements with pagination', () => {
+    setup('<ul id="list"><li>a</li><li>b</li><li>c</li></ul>');
+    const res = extractPage(
+      document,
+      { mode: 'html', selector: '#list > li', offset: 1, limit: 1 },
+      1,
+      0,
+    );
+    expect(res.mode).toBe('html');
+    if (res.mode === 'html') {
+      expect(res.total).toBe(3);
+      expect(res.offset).toBe(1);
+      expect(res.limit).toBe(1);
+      expect(res.items).toEqual(['<li>b</li>']);
+    }
+  });
+
+  it('structured keeps long direct text (no 500-char truncation)', () => {
+    setup(`<div id="r"><p>${'x'.repeat(600)}</p></div>`);
+    const res = extractPage(document, { mode: 'structured', selector: '#r', depth: 1 }, 1, 0);
+    expect(res.mode).toBe('structured');
+    if (res.mode === 'structured') {
+      const p = res.nodes.find((n) => n.tag === 'p');
+      expect(p?.text?.length).toBe(600);
+    }
+  });
+
+  it('exclude drops matched elements from text / structured / html', () => {
+    setup('<div id="r"><p>keep</p><p class="noise">drop</p></div>');
+    const text = extractPage(document, { mode: 'text', selector: '#r', exclude: '.noise' }, 1, 0);
+    expect(text.mode).toBe('text');
+    if (text.mode === 'text' && 'texts' in text) {
+      expect(text.texts.join('')).toBe('keep');
+    }
+    const st = extractPage(
+      document,
+      { mode: 'structured', selector: '#r', depth: 1, exclude: '.noise' },
+      1,
+      0,
+    );
+    if (st.mode === 'structured') {
+      const joined = st.nodes.map((n) => n.text ?? '').join('');
+      expect(joined).toContain('keep');
+      expect(joined).not.toContain('drop');
+    }
+    const html = extractPage(document, { mode: 'html', selector: '#r', exclude: '.noise' }, 1, 0);
+    if (html.mode === 'html') {
+      expect(html.items[0]).toContain('keep');
+      expect(html.items[0]).not.toContain('drop');
+    }
+  });
 });

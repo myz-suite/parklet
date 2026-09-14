@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -33,23 +33,28 @@ export interface Session {
 export const test = base.extend<{ session: Session }>({
   session: [
     async ({}, use) => {
-      const server = await startServer();
+      const server = await startServer({ enableEval: true });
       let session: Session;
       try {
         const { context, sw, profileDir } = await launchExtensionContext(server.url, server.token);
         try {
-          const prevPages = context.pages().length;
+          const before = new Set(context.pages());
           const created = (await command(server.url, 'create-tab', {
             url: 'https://example.com',
           })) as { data?: { tab?: { id?: number } } };
           const tabId = created.data?.tab?.id;
           if (typeof tabId !== 'number') throw new Error('create-tab did not return a tab id');
 
-          const page =
-            context.pages().length > prevPages
-              ? context.pages()[context.pages().length - 1]!
-              : await context.waitForEvent('page', { timeout: 10_000 });
-          await page.waitForLoadState('domcontentloaded');
+          // 通过 context.pages() 差集轮询等待新 tab（避免 'page' 事件在 waitForEvent 之前已触发的竞态）
+          let page: Page | undefined;
+          const deadline = Date.now() + 20_000;
+          while (Date.now() < deadline) {
+            page = context.pages().find((p) => !before.has(p));
+            if (page !== undefined) break;
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          if (page === undefined) throw new Error('create-tab did not open a page');
+          await page.waitForLoadState('domcontentloaded').catch(() => {});
           session = { serverUrl: server.url, page, context, sw, server, tabId };
         } finally {
           // 若 fixture 内初始化失败也要关浏览器
@@ -88,24 +93,24 @@ test('goto 驱动真实页面并返回 context 快照', async ({ session }) => {
   expect(session.page.url()).toContain('iana.org');
 });
 
-test('session 连续性：后续命令复用同一会话并感知导航', async ({ session }) => {
-  // 首次显式 goto 建立 session 并绑定 tab
+test('当前 tab 连续性：后续命令复用同一目标并感知导航', async ({ session }) => {
+  // 首次 goto 设置当前目标 tab
   const goto = (await command(
     session.serverUrl,
     'goto',
     { url: 'https://example.com' },
     { tabId: session.tabId },
-  )) as { sessionId?: string; context?: { url?: string } };
+  )) as { tabId?: number; context?: { url?: string } };
   await session.page.waitForURL('https://example.com/**', { timeout: 20_000 });
-  expect(goto.sessionId).toMatch(/^pl-/);
+  expect(goto.tabId).toBe(session.tabId);
 
-  // 后续命令不带 tabId：走默认 session（连续性），context 应一致
+  // 后续命令不带 tabId：走当前目标 tab（连续性），context 应一致
   const extract = (await command(session.serverUrl, 'extract', {})) as {
-    sessionId?: string;
+    tabId?: number;
     context?: { url?: string };
     data?: { snapshot?: { visibleText?: string } };
   };
-  expect(extract.sessionId).toBe(goto.sessionId);
+  expect(extract.tabId).toBe(goto.tabId);
   expect(extract.context?.url).toContain('example.com');
   expect(extract.data?.snapshot?.visibleText).toContain('Example Domain');
 });
@@ -269,9 +274,9 @@ test('extract --article 不再误报 INVALID_PARAMS', async ({ session }) => {
       'goto',
       { url: `${web.url}/article` },
       { tabId: session.tabId },
-    )) as { sessionId?: string };
+    )) as { tabId?: number };
     await session.page.waitForURL(`${web.url}/article`, { timeout: 20_000 });
-    expect(goto.sessionId).toBeDefined();
+    expect(goto.tabId).toBeDefined();
 
     const res = await runCli(session.serverUrl, ['extract', '--article']);
     expect(res.stderr).not.toContain('INVALID_PARAMS');
@@ -498,6 +503,271 @@ test('scroll：滚动后 scrollY 真实变化', async ({ session }) => {
       { tabId: session.tabId },
     )) as { data?: { scrollY?: number } };
     expect(info.data?.scrollY).toBeGreaterThan(100);
+  } finally {
+    web.stop();
+  }
+});
+
+test('links：按 href 分组并分页', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/list` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/list`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'links',
+      { limit: 5 },
+      { tabId: session.tabId },
+    )) as {
+      data?: {
+        links?: Array<{ href: string; texts: string[]; count: number }>;
+        total?: number;
+        limit?: number;
+      };
+    };
+    expect(res.data?.total).toBe(25);
+    expect(res.data?.links).toHaveLength(5);
+    expect(res.data?.limit).toBe(5);
+    expect(res.data?.links?.[0]?.href).toMatch(/\/item\/0$/);
+    expect(res.data?.links?.[0]?.texts).toContain('Item 0');
+  } finally {
+    web.stop();
+  }
+});
+
+test('forms：labels / password 脱敏 / 勾选态 / 分组', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(
+      session.serverUrl,
+      'goto',
+      { url: `${web.url}/form-rich` },
+      {
+        tabId: session.tabId,
+      },
+    );
+    await session.page.waitForURL(`${web.url}/form-rich`, { timeout: 20_000 });
+    const res = (await command(session.serverUrl, 'forms', {}, { tabId: session.tabId })) as {
+      data?: {
+        forms?: Array<{
+          action?: string;
+          method?: string;
+          fields: Array<Record<string, unknown>>;
+        }>;
+        total?: number;
+      };
+    };
+    expect(res.data?.total).toBeGreaterThanOrEqual(6);
+    const form = res.data?.forms?.[0];
+    expect(form?.action).toBe('/submitted');
+    expect(form?.method).toBe('POST');
+    const fields = form?.fields ?? [];
+    expect(fields.find((f) => f.name === 'user')?.labels).toContain('Username');
+    expect(fields.find((f) => f.name === 'pw')?.value).toBe('********');
+    expect(fields.find((f) => f.name === 'remember')?.checked).toBe(true);
+    expect(fields.find((f) => f.name === 'country')?.selected).toContain('us');
+  } finally {
+    web.stop();
+  }
+});
+
+test('selection：按 selector 选中并返回文本', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(
+      session.serverUrl,
+      'goto',
+      { url: `${web.url}/article` },
+      { tabId: session.tabId },
+    );
+    await session.page.waitForURL(`${web.url}/article`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'selection',
+      { selector: '#main h1' },
+      {
+        tabId: session.tabId,
+      },
+    )) as { data?: { text?: string } };
+    expect(res.data?.text).toBe('Mock Article Title');
+  } finally {
+    web.stop();
+  }
+});
+
+test('eval：执行脚本返回序列化结果，不可序列化报 NOT_SERIALIZABLE', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(
+      session.serverUrl,
+      'goto',
+      { url: `${web.url}/article` },
+      { tabId: session.tabId },
+    );
+    await session.page.waitForURL(`${web.url}/article`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'eval',
+      { script: 'const n = document.querySelectorAll("h1").length;\nreturn n;' },
+      { tabId: session.tabId },
+    )) as { data?: { value?: number } };
+    expect(res.data?.value).toBe(1);
+    await expect(
+      command(session.serverUrl, 'eval', { script: 'return 1n;' }, { tabId: session.tabId }),
+    ).rejects.toThrow(/NOT_SERIALIZABLE/);
+  } finally {
+    web.stop();
+  }
+});
+
+test('scroll --selector：滚动内部容器触发懒加载', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/lazy` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/lazy`, { timeout: 20_000 });
+    const before = (await command(
+      session.serverUrl,
+      'extract',
+      { mode: 'structured', selector: '.row', depth: 0 },
+      { tabId: session.tabId },
+    )) as { data?: { total?: number } };
+    expect(before.data?.total).toBe(10);
+    await command(
+      session.serverUrl,
+      'scroll',
+      { selector: '#list', amount: 400 },
+      { tabId: session.tabId },
+    );
+    await new Promise((r) => setTimeout(r, 700));
+    const after = (await command(
+      session.serverUrl,
+      'extract',
+      { mode: 'structured', selector: '.row', depth: 0 },
+      { tabId: session.tabId },
+    )) as { data?: { total?: number } };
+    expect(after.data?.total).toBeGreaterThan(10);
+  } finally {
+    web.stop();
+  }
+});
+
+test('dom-query：按 selector 返回匹配数与概要', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/query` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/query`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'dom-query',
+      { selector: '.item' },
+      { tabId: session.tabId },
+    )) as { data?: { total?: number; matches?: Array<{ text?: string }> } };
+    expect(res.data?.total).toBe(2);
+    expect(res.data?.matches?.map((m) => m.text)).toEqual(['alpha', 'beta']);
+  } finally {
+    web.stop();
+  }
+});
+
+test('extract --exclude：剔除匹配元素', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/query` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/query`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'extract',
+      { mode: 'text', selector: '#host', exclude: '.noise' },
+      { tabId: session.tabId },
+    )) as { data?: { texts?: string[] } };
+    expect(res.data?.texts).toEqual(['alpha', 'beta']);
+  } finally {
+    web.stop();
+  }
+});
+
+test('plt run：一次进程执行多条命令（JSON lines）', async ({ session }) => {
+  const web = await startTestWeb();
+  const dir = mkdtempSync(join(tmpdir(), 'pl-run-'));
+  const file = join(dir, 'cmds.jsonl');
+  try {
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          method: 'goto',
+          params: { url: `${web.url}/list` },
+          tabId: session.tabId,
+        }),
+        JSON.stringify({
+          method: 'extract',
+          params: { mode: 'structured', selector: '#list', depth: 0 },
+          tabId: session.tabId,
+        }),
+      ].join('\n'),
+    );
+    const res = await runCli(session.serverUrl, ['run', file, '--json']);
+    expect(res.code).toBe(0);
+    expect(res.stdout).toContain('"total"');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    web.stop();
+  }
+});
+
+test('extract --mode html：返回 outerHTML（可按 class 区分）', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/query` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/query`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'extract',
+      { mode: 'html', selector: '#host' },
+      { tabId: session.tabId },
+    )) as { data?: { items?: string[] } };
+    expect(res.data?.items?.[0]).toContain('class="item"');
+    expect(res.data?.items?.[0]).toContain('alpha');
+  } finally {
+    web.stop();
+  }
+});
+
+test('scroll-to：把元素滚入视口', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/tall` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/tall`, { timeout: 20_000 });
+    await command(session.serverUrl, 'scroll-to', { selector: 'footer' }, { tabId: session.tabId });
+    await new Promise((r) => setTimeout(r, 900));
+    const info = (await command(
+      session.serverUrl,
+      'get-page-info',
+      {},
+      { tabId: session.tabId },
+    )) as { data?: { scrollY?: number } };
+    expect(info.data?.scrollY).toBeGreaterThan(100);
+  } finally {
+    web.stop();
+  }
+});
+
+test('--json 输出可被严格 JSON.parse', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/query` }, { tabId: session.tabId });
+    const res = await runCli(session.serverUrl, [
+      '--tab',
+      String(session.tabId),
+      'extract',
+      '--selector',
+      '#host',
+      '--json',
+    ]);
+    expect(res.code).toBe(0);
+    const parsed = JSON.parse(res.stdout.trim()) as { tabId?: number; data?: { texts?: string[] } };
+    expect(typeof parsed.tabId).toBe('number');
+    expect(Array.isArray(parsed.data?.texts)).toBe(true);
   } finally {
     web.stop();
   }

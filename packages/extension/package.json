@@ -1,12 +1,13 @@
 {
   "name": "@parkinglot/extension",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "description": "ParkingLot: Drive a real browser owned by the human user. Chrome MV3 extension: WebSocket client, content-script page executor, popup console.",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "node build.config.mjs",
+    "zip": "pnpm run build && node scripts/pack.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },

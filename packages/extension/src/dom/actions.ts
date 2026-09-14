@@ -1,6 +1,7 @@
-import { findByCss, locate, toElementInfo, type Located } from './locator.js';
+import { findByCss, findByText, locate, toElementInfo, type Located } from './locator.js';
+import { collectForms, collectLinks } from './collect.js';
 import { extractPage, getScrollY, getViewport, type ExtractOptions } from './snapshot.js';
-import type { ElementInfo, SearchResult } from '@parkinglot/protocol';
+import type { DomQueryMatch, ElementInfo, SearchResult } from '@parkinglot/protocol';
 
 /** DOM 层命令执行器：在页面上下文执行单个命令并返回命令特有结果。 */
 
@@ -20,6 +21,32 @@ function fire(el: Element, type: string): void {
 
 function fail(code: string, message: string): never {
   throw Object.assign(new Error(message), { code });
+}
+
+/** selection 目标：selector（CSS）或 text（可见文本）至少其一。 */
+function resolveSelectionTarget(doc: Document, params: Record<string, unknown>): Element {
+  if (params.selector !== undefined) return findByCss(doc, String(params.selector)).element;
+  if (params.text !== undefined) return findByText(doc, String(params.text)).element;
+  return fail('INVALID_PARAMS', 'selection requires selector or text');
+}
+
+/** 选中元素文本并返回选中内容：input/textarea 用 setSelectionRange，其余用 Range + Selection。 */
+function selectElementText(doc: Document, el: Element): string {
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'input' || tag === 'textarea') {
+    const field = el as HTMLInputElement | HTMLTextAreaElement;
+    field.focus();
+    field.select();
+    const start = field.selectionStart ?? 0;
+    const end = field.selectionEnd ?? field.value.length;
+    return field.value.slice(start, end);
+  }
+  const selection = doc.getSelection();
+  const range = doc.createRange();
+  range.selectNodeContents(el);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  return selection?.toString() ?? '';
 }
 
 const INPUT_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
@@ -319,6 +346,55 @@ function applyDefaultAction(
   }
 }
 
+/** 滚动元素自身的 overflow 内容（direction/amount），用于懒加载容器；不影响页面滚动。 */
+function scrollElementWithin(el: Element, params: Record<string, unknown>): void {
+  const target = el as HTMLElement;
+  const dir = params.direction !== undefined ? String(params.direction) : undefined;
+  const amount = params.amount !== undefined ? Number(params.amount) : undefined;
+  const step = amount ?? Math.round((target.clientHeight || window.innerHeight) * 0.8);
+  let delta: number;
+  switch (dir) {
+    case 'up':
+      delta = -step;
+      break;
+    case 'top':
+      delta = -target.scrollTop;
+      break;
+    case 'bottom':
+      delta = target.scrollHeight - target.clientHeight - target.scrollTop;
+      break;
+    default:
+      delta = step; // 'down' 或未给 direction：向下滚一屏/amount
+  }
+  target.scrollBy({ top: delta, behavior: 'smooth' });
+}
+
+/** dom-query：按 CSS 或可见文本返回匹配元素概要（探索用，不含子树）。 */
+function domQuery(
+  doc: Document,
+  params: Record<string, unknown>,
+): { matches: DomQueryMatch[]; total: number } {
+  if (params.text !== undefined) {
+    const located = findByText(doc, String(params.text));
+    return { matches: [toDomQueryMatch(located.element)], total: 1 };
+  }
+  const els = Array.from(doc.querySelectorAll(String(params.selector ?? '')));
+  const limit = params.limit !== undefined ? Number(params.limit) : 20;
+  return { matches: els.slice(0, limit).map(toDomQueryMatch), total: els.length };
+}
+
+function toDomQueryMatch(el: Element): DomQueryMatch {
+  const info = toElementInfo(el);
+  const match: DomQueryMatch = { tag: info.tag };
+  const cls = info.attrs.class;
+  const id = info.attrs.id;
+  if (cls !== undefined) match.class = cls;
+  if (id !== undefined) match.id = id;
+  if (info.text !== undefined) match.text = info.text;
+  if (info.box !== undefined) match.box = info.box;
+  return match;
+}
+
 export async function executeDomAction(
   method: string,
   params: Record<string, unknown>,
@@ -437,8 +513,9 @@ export async function executeDomAction(
 
     case 'scroll': {
       if (params.selector !== undefined) {
-        const l = findByCss(doc, String(params.selector));
-        (l.element as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // 滚动元素**自身**的 overflow 内容（可反复触发懒加载）；不改变页面滚动
+        const el = findByCss(doc, String(params.selector)).element;
+        scrollElementWithin(el, params);
       } else if (params.direction !== undefined) {
         const dir = String(params.direction);
         const amount =
@@ -459,6 +536,12 @@ export async function executeDomAction(
       }
       return { viewport: getViewport() };
     }
+    case 'scroll-to': {
+      // 滚动页面使目标元素进入视口（保留旧 scroll --selector 的能力）
+      const l = findByCss(doc, String(params.selector));
+      (l.element as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return { element: l.info };
+    }
     case 'screenshot':
       // 由 background 处理（chrome.tabs.captureVisibleTab）
       throw Object.assign(new Error('screenshot must be handled by the background'), {
@@ -477,6 +560,17 @@ export async function executeDomAction(
       };
     }
 
+    case 'dom-query': {
+      return domQuery(doc, params);
+    }
+
+    case 'links': {
+      return collectLinks(doc, params);
+    }
+    case 'forms': {
+      return collectForms(doc, params);
+    }
+
     case 'fetch': {
       return pageFetch(params);
     }
@@ -491,10 +585,9 @@ export async function executeDomAction(
       return {};
     }
 
-    case 'eval': {
-      // 页面上下文执行（server 默认禁用，需显式开启）
-      const fn = new Function(`"use strict"; return (${String(params.expression ?? '')});`);
-      return { value: await fn() };
+    case 'selection': {
+      const el = resolveSelectionTarget(doc, params);
+      return { text: selectElementText(doc, el) };
     }
 
     default:
@@ -587,17 +680,43 @@ export function parseSearchResults(doc: Document): SearchResult[] {
   }
 
   if (results.length === 0) {
-    // Google：h3 标题 + 父级 a + 相邻摘要（尽力解析）
+    // Google：h3 标题 + 父级 a + 尽力解析摘要（多选择器 + 回退，DOM 变动时可能缺失）
     for (const h3 of doc.querySelectorAll('h3')) {
       const link = h3.closest('a') ?? h3.parentElement?.closest('a');
       const title = h3.textContent?.trim() ?? '';
       if (link instanceof HTMLAnchorElement && title.length > 0) {
-        results.push({ title, url: link.href });
+        results.push({ title, url: link.href, snippet: googleSnippet(h3) });
       }
     }
   }
 
   return results.slice(0, 10);
+}
+
+/** Google 结果摘要：主选择器 + 回退链，取不到返回 undefined（best-effort）。 */
+function googleSnippet(h3: Element): string | undefined {
+  const container = h3.parentElement?.parentElement ?? h3.parentElement;
+  if (container === null || container === undefined) return undefined;
+  const selectors = [
+    '.VwiC3b',
+    '.aCOpRe',
+    '.IsZvec',
+    '.lEBKkf',
+    'span.st',
+    '.MUxGbd',
+    '[data-sncf]',
+  ];
+  for (const selector of selectors) {
+    const text = container.querySelector(selector)?.textContent?.replace(/\s+/g, ' ').trim();
+    if (text !== undefined && text.length > 0) return text;
+  }
+  // 回退：容器内最长的、不同于标题的文本块
+  const title = h3.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+  const candidates = Array.from(container.querySelectorAll('div, span'))
+    .map((el) => (el.textContent ?? '').replace(/\s+/g, ' ').trim())
+    .filter((t) => t.length > 20 && t !== title && !t.includes(title));
+  candidates.sort((a, b) => b.length - a.length);
+  return candidates[0];
 }
 
 export type { ElementInfo, Located };

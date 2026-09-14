@@ -21,7 +21,6 @@ describe('envelope type guards', () => {
       isResponse({
         id: '1',
         result: {
-          sessionId: 'pl-1',
           tabId: 7,
           context: { url: 'https://example.com', title: 'Ex', navId: 1, tabId: 7 },
           data: {},

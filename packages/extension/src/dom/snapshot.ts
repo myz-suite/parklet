@@ -31,8 +31,6 @@ const Defuddle = DefuddleModule as unknown as DefuddleConstructor;
 
 /** 结构化提取的总节点预算（固定常量，不进 wire 参数）：超限按 BFS 截断并置 truncated。 */
 export const MAX_STRUCTURED_NODES = 500;
-/** 单个 DomNode 直系文本的字符上限（防止超长文本撑爆消息）。 */
-const MAX_NODE_TEXT = 500;
 
 function skipElement(el: Element): boolean {
   const tag = el.tagName.toLowerCase();
@@ -57,31 +55,60 @@ function scopeOf(root: Element | Document): Element | null {
   return root as Element;
 }
 
-/** 提取可见文本（innerText 近似，回退到 TreeWalker 并排除 script/style）。 */
-export function extractVisibleText(root: Element | Document | null, maxChars?: number): string {
+/** 提取可见文本（innerText 近似，回退到 TreeWalker 并排除 script/style）。
+ * 提供 exclude 时改为 TreeWalker 并跳过匹配 exclude 的子树。 */
+export function extractVisibleText(
+  root: Element | Document | null,
+  maxChars?: number,
+  exclude?: string,
+): string {
   const scope = root === null ? null : scopeOf(root);
   if (scope === null) return '';
-  let text = '';
-  const inner = (scope as HTMLElement).innerText;
-  if (typeof inner === 'string' && inner.length > 0) {
-    text = inner.trim();
+  let text: string;
+  if (exclude !== undefined) {
+    text = textExcluding(scope, exclude);
   } else {
-    const walker = scope.ownerDocument.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
-    const parts: string[] = [];
-    let node = walker.nextNode();
-    while (node !== null) {
-      const parent = node.parentElement;
-      if (parent !== null && !skipElement(parent)) {
-        parts.push(node.textContent ?? '');
-      }
-      node = walker.nextNode();
+    const inner = (scope as HTMLElement).innerText;
+    if (typeof inner === 'string' && inner.length > 0) {
+      text = inner.trim();
+    } else {
+      text = textExcluding(scope, undefined);
     }
-    text = parts.join(' ').replace(/\s+/g, ' ').trim();
   }
   if (maxChars !== undefined && maxChars > 0 && text.length > maxChars) {
     return `${text.slice(0, maxChars)}…`;
   }
   return text;
+}
+
+function hasExcludedAncestor(el: Element, scope: Element, exclude: string | undefined): boolean {
+  if (exclude === undefined) return false;
+  let cur: Element | null = el;
+  while (cur !== null) {
+    if (cur.matches(exclude)) return true;
+    if (cur === scope) break;
+    cur = cur.parentElement;
+  }
+  return false;
+}
+
+/** TreeWalker 文本提取，跳过 script/style 与匹配 exclude 的子树。 */
+function textExcluding(scope: Element, exclude: string | undefined): string {
+  const walker = scope.ownerDocument.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  const parts: string[] = [];
+  let node = walker.nextNode();
+  while (node !== null) {
+    const parent = node.parentElement;
+    if (
+      parent !== null &&
+      !skipElement(parent) &&
+      !hasExcludedAncestor(parent, scope, exclude === undefined ? undefined : exclude)
+    ) {
+      parts.push(node.textContent ?? '');
+    }
+    node = walker.nextNode();
+  }
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
 export function getViewport(): Viewport {
@@ -106,10 +133,11 @@ export function buildPageSnapshot(
   tabId: number,
   navId: number,
   maxChars?: number,
+  exclude?: string,
 ): PageSnapshot {
   return {
     context: buildContextSnapshot(doc, tabId, navId),
-    visibleText: extractVisibleText(doc, maxChars),
+    visibleText: extractVisibleText(doc, maxChars, exclude),
     viewport: getViewport(),
     scrollY: getScrollY(),
   };
@@ -120,7 +148,7 @@ export function buildPageSnapshot(
 // ---------------------------------------------------------------------------
 
 export interface ExtractOptions {
-  mode?: 'text' | 'structured';
+  mode?: 'text' | 'structured' | 'html';
   article?: boolean;
   selector?: string;
   offset?: number;
@@ -128,6 +156,8 @@ export interface ExtractOptions {
   depth?: number;
   visibleOnly?: boolean;
   maxChars?: number;
+  /** 提取前排除匹配该 CSS 的元素（及其子树） */
+  exclude?: string;
 }
 
 /**
@@ -155,7 +185,7 @@ function directText(el: Element): string | undefined {
   }
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (normalized.length === 0) return undefined;
-  return normalized.length > MAX_NODE_TEXT ? `${normalized.slice(0, MAX_NODE_TEXT)}…` : normalized;
+  return normalized;
 }
 
 function makeDomNode(el: Element): DomNode {
@@ -175,6 +205,7 @@ export function buildDomTree(
   roots: Element[],
   depth: number,
   maxNodes = MAX_STRUCTURED_NODES,
+  exclude?: string,
 ): { nodes: DomNode[]; truncated: boolean } {
   const nodes: DomNode[] = [];
   const queue: Array<{ el: Element; node: DomNode; level: number }> = [];
@@ -183,6 +214,7 @@ export function buildDomTree(
 
   for (const el of roots) {
     if (skipElement(el)) continue;
+    if (exclude !== undefined && el.matches(exclude)) continue;
     if (count >= maxNodes) {
       truncated = true;
       break;
@@ -201,6 +233,7 @@ export function buildDomTree(
     if (level >= depth) continue;
     for (const child of Array.from(el.children)) {
       if (skipElement(child)) continue;
+      if (exclude !== undefined && child.matches(exclude)) continue;
       if (count >= maxNodes) {
         truncated = true;
         budgetHit = true;
@@ -236,7 +269,15 @@ function extractArticle(doc: Document, selector?: string): ExtractResult {
   return article;
 }
 
-/** extract 命令入口：按 params 分发 text / structured / article。 */
+/** 克隆元素并移除匹配 exclude 的子树，返回 outerHTML（不修改页面）。 */
+function stripExcluded(el: Element, exclude: string | undefined): string {
+  if (exclude === undefined) return el.outerHTML;
+  const clone = el.cloneNode(true) as Element;
+  for (const hit of Array.from(clone.querySelectorAll(exclude))) hit.remove();
+  return clone.outerHTML;
+}
+
+/** extract 命令入口：按 params 分发 text / structured / html / article。 */
 export function extractPage(
   doc: Document,
   params: ExtractOptions,
@@ -248,8 +289,26 @@ export function extractPage(
   }
 
   const mode = params.mode ?? 'text';
+  const exclude = params.exclude;
   const matched =
     params.selector !== undefined ? Array.from(doc.querySelectorAll(params.selector)) : [doc.body];
+
+  // html：第一层列表 = selector 匹配元素本身（不做“单 root 取其子元素”的折叠），返回 outerHTML
+  if (mode === 'html') {
+    const visible = params.visibleOnly === true ? matched.filter(isVisible) : matched;
+    const total = visible.length;
+    const sliced = sliceList(visible, params.offset, params.limit);
+    return {
+      mode: 'html',
+      items: sliced
+        .filter((el) => exclude === undefined || !el.matches(exclude))
+        .map((el) => stripExcluded(el, exclude)),
+      total,
+      ...(params.offset !== undefined ? { offset: params.offset } : {}),
+      ...(params.limit !== undefined ? { limit: params.limit } : {}),
+    };
+  }
+
   const layer = firstLayerElements(matched);
   // 先按 visibleOnly 过滤，再计算 total（分页前可用总数），最后 offset/limit 切片
   const visible = params.visibleOnly === true ? layer.filter(isVisible) : layer;
@@ -262,7 +321,12 @@ export function extractPage(
   };
 
   if (mode === 'structured') {
-    const { nodes, truncated } = buildDomTree(sliced, params.depth ?? 3);
+    const { nodes, truncated } = buildDomTree(
+      sliced,
+      params.depth ?? 3,
+      MAX_STRUCTURED_NODES,
+      exclude,
+    );
     return {
       mode: 'structured',
       nodes,
@@ -272,9 +336,14 @@ export function extractPage(
   }
 
   if (params.selector !== undefined) {
-    const texts = sliced.map((el) => extractVisibleText(el, params.maxChars));
+    const texts = sliced
+      .filter((el) => exclude === undefined || !el.matches(exclude))
+      .map((el) => extractVisibleText(el, params.maxChars, exclude));
     return { mode: 'text', texts, ...pagination };
   }
 
-  return { mode: 'text', snapshot: buildPageSnapshot(doc, tabId, navId, params.maxChars) };
+  return {
+    mode: 'text',
+    snapshot: buildPageSnapshot(doc, tabId, navId, params.maxChars, exclude),
+  };
 }

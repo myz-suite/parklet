@@ -13,7 +13,7 @@ import type { ServerConfig } from './config.js';
 import { isHostAllowed } from './config.js';
 import type { Ledger } from './ledger.js';
 import { redactParams } from './ledger.js';
-import type { ResolvedTarget, SessionRegistry } from './session.js';
+import type { TargetState } from './target.js';
 
 /** Router 依赖的扩展连接抽象（ExtensionHub 实现，测试可注入 fake）。 */
 export interface RouterHub {
@@ -25,12 +25,13 @@ export interface RouterHub {
 
 export interface RouterDeps {
   config: ServerConfig;
-  registry: SessionRegistry;
   hub: RouterHub;
   ledger: Ledger;
+  /** 当前目标 tab（软指针） */
+  target: TargetState;
 }
 
-/** 需要解析 tab 目标的命令（goto 单独处理：无 session 时允许 extension 自选激活 tab）。 */
+/** 需要解析 tab 目标的命令（goto 单独处理：无目标时允许 extension 用激活 tab）。 */
 const NEEDS_TARGET: ReadonlySet<Method> = new Set([
   'back',
   'forward',
@@ -42,10 +43,15 @@ const NEEDS_TARGET: ReadonlySet<Method> = new Set([
   'press',
   'hover',
   'select',
+  'selection',
   'scroll',
+  'scroll-to',
   'screenshot',
   'extract',
   'get-page-info',
+  'dom-query',
+  'links',
+  'forms',
   'fetch',
   'search',
   'wait',
@@ -69,6 +75,7 @@ function extractHost(raw: unknown): string | undefined {
 
 /**
  * 命令路由：校验 → 禁用检查 → 寻址 → 扩展在线检查 → 转发 → 归一化。
+ * 目标寻址：params.tabId > 当前目标 tab > 最近激活 tab（无 session 概念）。
  * 每个命令写入命令账本。
  */
 export class Router {
@@ -81,7 +88,7 @@ export class Router {
     // 1. 信封校验
     const parsed = requestSchema.safeParse(raw);
     if (!parsed.success) {
-      return this.error('INVALID_REQUEST', 'malformed request envelope', undefined, undefined);
+      return this.error('INVALID_REQUEST', 'malformed request envelope', undefined);
     }
     const req = parsed.data as Request;
     const base = {
@@ -100,7 +107,7 @@ export class Router {
         code,
         durationMs: Date.now() - startedAt,
       });
-      return this.error(code, `command '${req.method}' is disabled`, req.id, req.sessionId);
+      return this.error(code, `command '${req.method}' is disabled`, req.id);
     }
 
     // 3. 参数校验
@@ -113,12 +120,7 @@ export class Router {
         code: 'INVALID_PARAMS',
         durationMs: Date.now() - startedAt,
       });
-      return this.error(
-        'INVALID_PARAMS',
-        `invalid params for '${req.method}': ${detail}`,
-        req.id,
-        req.sessionId,
-      );
+      return this.error('INVALID_PARAMS', `invalid params for '${req.method}': ${detail}`, req.id);
     }
     const params = vp.data;
 
@@ -133,7 +135,7 @@ export class Router {
           code: 'URL_INVALID',
           durationMs: Date.now() - startedAt,
         });
-        return this.error('URL_INVALID', `invalid URL: ${String(url)}`, req.id, req.sessionId);
+        return this.error('URL_INVALID', `invalid URL: ${String(url)}`, req.id);
       }
       if (!isHostAllowed(host, this.deps.config.allowedHosts)) {
         this.deps.ledger.record({
@@ -146,51 +148,26 @@ export class Router {
           'HOST_NOT_ALLOWED',
           `host '${host}' is not in PARKINGLOT_ALLOWED_HOSTS`,
           req.id,
-          req.sessionId,
         );
       }
     }
 
-    // 5. 目标解析
-    let target: ResolvedTarget | undefined;
-    if (NEEDS_TARGET.has(req.method)) {
-      try {
-        target = this.deps.registry.resolve(
-          { sessionId: req.sessionId, tabId: req.tabId },
-          this.deps.hub.getLatestTabId(),
+    // 5. 目标解析：显式 tabId > 当前目标 tab > 最近激活 tab
+    let tabId: number | undefined;
+    if (NEEDS_TARGET.has(req.method) || req.method === 'goto') {
+      tabId = req.tabId ?? this.deps.target.get() ?? this.deps.hub.getLatestTabId();
+      if (tabId === undefined && NEEDS_TARGET.has(req.method)) {
+        this.deps.ledger.record({
+          ...base,
+          outcome: 'error',
+          code: 'EXTENSION_NO_TAB',
+          durationMs: Date.now() - startedAt,
+        });
+        return this.error(
+          'EXTENSION_NO_TAB',
+          'no tab to target: run `plt goto <url>` or pass --tab <id>',
+          req.id,
         );
-      } catch (err) {
-        if (err instanceof ParkinglotError) {
-          this.deps.ledger.record({
-            ...base,
-            outcome: 'error',
-            code: err.code,
-            durationMs: Date.now() - startedAt,
-          });
-          return this.error(err.code, err.message, req.id, req.sessionId);
-        }
-        throw err;
-      }
-    } else if (req.method === 'goto') {
-      try {
-        target = this.deps.registry.resolve(
-          { sessionId: req.sessionId, tabId: req.tabId },
-          this.deps.hub.getLatestTabId(),
-        );
-      } catch (err) {
-        if (err instanceof ParkinglotError && err.code === 'EXTENSION_NO_TAB') {
-          target = undefined; // 首次使用：extension 用激活 tab 导航
-        } else if (err instanceof ParkinglotError) {
-          this.deps.ledger.record({
-            ...base,
-            outcome: 'error',
-            code: err.code,
-            durationMs: Date.now() - startedAt,
-          });
-          return this.error(err.code, err.message, req.id, req.sessionId);
-        } else {
-          throw err;
-        }
       }
     }
 
@@ -202,7 +179,7 @@ export class Router {
         code: 'EXTENSION_OFFLINE',
         durationMs: Date.now() - startedAt,
       });
-      return this.error('EXTENSION_OFFLINE', 'extension is not connected', req.id, req.sessionId);
+      return this.error('EXTENSION_OFFLINE', 'extension is not connected', req.id);
     }
 
     // 7. 不依赖扩展的命令：server 本地处理（ping / get-status）
@@ -212,57 +189,36 @@ export class Router {
       return local;
     }
 
-    // 8. 转发（携带解析后的寻址目标）
-    const wireReq: Request = {
-      id: req.id,
-      method: req.method,
-      params,
-      sessionId: target?.sessionId ?? req.sessionId,
-      tabId: target?.tabId ?? req.tabId,
-    };
+    // 8. 转发（携带解析后的目标 tab）
+    const wireReq: Request = { id: req.id, method: req.method, params, tabId };
     const res = await this.deps.hub.sendRequest(wireReq, this.deps.config.commandTimeoutMs);
 
-    // 归一化 + 会话状态回写
+    // 归一化 + 当前目标回写
     if ('error' in res) {
-      // 防御性回退：目标 tab 已不存在 → 解除 session 绑定（不重试本次命令，避免重复副作用）
-      if (res.error.code === 'SESSION_TAB_CLOSED' && wireReq.tabId !== undefined) {
-        this.deps.registry.unbindTab(wireReq.tabId);
+      // 目标 tab 已不存在 → 清除当前目标（不重试本次命令，避免重复副作用）
+      if (res.error.code === 'TAB_CLOSED' && wireReq.tabId !== undefined) {
+        this.deps.target.clearIf(wireReq.tabId);
       }
       this.deps.ledger.record({
         ...base,
         outcome: 'error',
         code: res.error.code,
-        sessionId: wireReq.sessionId,
         tabId: wireReq.tabId,
         durationMs: Date.now() - startedAt,
       });
       return res;
     }
 
-    const { sessionId: resSessionId, tabId: resTabId, context } = res.result;
-    let sessionId = resSessionId ?? wireReq.sessionId;
-    if (sessionId === undefined && req.method === 'goto' && resTabId !== undefined) {
-      // goto 且此前无 session → 自动创建并绑定
-      const created = this.deps.registry.create({ tabId: resTabId });
-      sessionId = created.id;
-    }
-    if (sessionId !== undefined) {
-      this.deps.registry.touch(sessionId, { tabId: resTabId, context });
-    }
+    const { tabId: resTabId, context } = res.result;
+    if (resTabId !== undefined) this.deps.target.set(resTabId);
 
     const finalRes: Response = {
       id: res.id,
-      result: {
-        sessionId,
-        tabId: resTabId,
-        context,
-        data: res.result.data,
-      },
+      result: { tabId: resTabId, context, data: res.result.data },
     };
     this.deps.ledger.record({
       ...base,
       outcome: 'ok',
-      sessionId,
       tabId: resTabId,
       durationMs: Date.now() - startedAt,
     });
@@ -273,11 +229,9 @@ export class Router {
     code: ProtocolError['error']['code'],
     message: string,
     requestId: string | undefined,
-    sessionId: string | undefined,
   ): ProtocolError {
     const data: Record<string, unknown> = {};
     if (requestId !== undefined) data.requestId = requestId;
-    if (sessionId !== undefined) data.sessionId = sessionId;
     return { id: requestId ?? 'server', error: { code, message, data } };
   }
 
@@ -295,13 +249,13 @@ export class Router {
         },
       };
     }
-    const { config, registry } = this.deps;
+    const { config } = this.deps;
     return {
       id: req.id,
       result: {
         data: {
           extensionConnected: this.deps.hub.isOnline(),
-          sessions: registry.list(),
+          currentTabId: this.deps.target.get(),
           config: {
             bind: config.bind,
             port: config.port,
@@ -315,3 +269,5 @@ export class Router {
     };
   }
 }
+
+export { ParkinglotError };

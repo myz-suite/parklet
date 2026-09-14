@@ -15,7 +15,6 @@ import type { ServerConfig } from './config.js';
 import type { EventCache } from './event-cache.js';
 import type { Ledger } from './ledger.js';
 import type { Router } from './router.js';
-import type { SessionRegistry } from './session.js';
 
 export const SERVER_NAME = 'parkinglot-server';
 export const MAX_BODY_BYTES = 10 * 1024 * 1024;
@@ -23,10 +22,10 @@ export const MAX_BODY_BYTES = 10 * 1024 * 1024;
 export interface HttpDeps {
   config: ServerConfig;
   router: Router;
-  registry: SessionRegistry;
   events: EventCache;
   ledger: Ledger;
   isExtensionOnline: () => boolean;
+  currentTabId: () => number | undefined;
 }
 
 /**
@@ -77,14 +76,12 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: HttpDeps)
       const envelope = payload as {
         method?: string;
         params?: unknown;
-        sessionId?: string;
         tabId?: number;
       };
       const request = {
         id: randomUUID(),
         method: envelope.method,
         params: envelope.params,
-        sessionId: envelope.sessionId,
         tabId: envelope.tabId,
       };
       const result = await deps.router.handle(request);
@@ -104,20 +101,6 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: HttpDeps)
       return;
     }
 
-    if (req.method === 'POST' && path === '/api/session') {
-      const body = await readBody(req);
-      let payload: { action?: string; id?: string };
-      try {
-        payload = body === null ? {} : (JSON.parse(body) as typeof payload);
-      } catch {
-        respondJson(res, 200, { ok: false, error: 'invalid body' });
-        return;
-      }
-      const result = handleSessionAction(deps, payload);
-      respondJson(res, 200, result);
-      return;
-    }
-
     if (req.method === 'GET' && path === '/api/ledger') {
       const tail = Math.min(
         Math.max(Number(url.searchParams.get('tail') ?? '100') || 100, 1),
@@ -133,41 +116,12 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: HttpDeps)
   }
 }
 
-function handleSessionAction(
-  deps: HttpDeps,
-  payload: { action?: string; id?: string },
-): Record<string, unknown> {
-  const { registry } = deps;
-  switch (payload.action) {
-    case 'new': {
-      const session = registry.create();
-      return { ok: true, session };
-    }
-    case 'use': {
-      if (!payload.id) return { ok: false, error: 'id required' };
-      if (!registry.setDefault(payload.id))
-        return { ok: false, error: `session ${payload.id} not found` };
-      return { ok: true, session: registry.get(payload.id) };
-    }
-    case 'close': {
-      if (!payload.id) return { ok: false, error: 'id required' };
-      return { ok: registry.close(payload.id), removed: true };
-    }
-    default:
-      return {
-        ok: false,
-        error: `unknown action '${String(payload.action)}' (expected new|use|close)`,
-      };
-  }
-}
-
 function buildStatus(deps: HttpDeps): Record<string, unknown> {
-  const { config, registry } = deps;
+  const { config } = deps;
   return {
     server: { name: SERVER_NAME, protocol: PROTOCOL_NAME, protocolVersion: PROTOCOL_VERSION },
     extensionConnected: deps.isExtensionOnline(),
-    sessions: registry.list(),
-    defaultSessionId: registry.getDefault()?.id,
+    currentTabId: deps.currentTabId(),
     config: {
       bind: config.bind,
       port: config.port,

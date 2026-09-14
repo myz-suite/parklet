@@ -11,9 +11,8 @@ export const ERROR_CODES = [
   // 连接层
   'EXTENSION_OFFLINE',
   'EXTENSION_NO_TAB',
-  // 会话/寻址层
-  'SESSION_NOT_FOUND',
-  'SESSION_TAB_CLOSED',
+  // 寻址层
+  'TAB_CLOSED',
   // 执行层
   'TIMEOUT',
   'TARGET_NOT_FOUND',
@@ -22,6 +21,7 @@ export const ERROR_CODES = [
   'URL_INVALID',
   'HOST_NOT_ALLOWED',
   'EVAL_DISABLED',
+  'NOT_SERIALIZABLE',
   // 兜底
   'INTERNAL',
 ] as const;

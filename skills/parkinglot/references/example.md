@@ -1,28 +1,28 @@
 # ParkingLot — Worked Examples
 
 Companion to [`protocol.md`](./protocol.md). Examples use the `plt` CLI; add `--json` to any
-command for the raw envelope (`{ sessionId, tabId, context, data }`). Sample outputs are
+command for the raw envelope (`{ tabId, context, data }`). Sample outputs are
 illustrative — URLs/ids/timings differ.
 
-## Session & continuity
+## Current tab & continuity
 
 ```bash
 plt goto https://example.com
-# 📍 https://example.com — Example Domain (navId=1, tab=7, session=pl-3c60af04)
+# 📍 https://example.com — Example Domain (navId=1, tab=7)
 
-plt extract                 # reuses the default session; context is the proof it stayed put
-# 📍 https://example.com — Example Domain (navId=1, tab=7, session=pl-3c60af04)
+plt extract                 # reuses the current tab; context is the proof it stayed put
+# 📍 https://example.com — Example Domain (navId=1, tab=7)
 # Example Domain
 # This domain is for use in illustrative examples ...
 # [viewport 1512x857]
 
 plt click-text "More information"   # real click → navigation
 # ⚡ <a> More information @(320,180)
-# 📍 https://www.iana.org/help/example-domains — ... (navId=2, tab=7, session=pl-3c60af04)
+# 📍 https://www.iana.org/help/example-domains — ... (navId=2, tab=7)
 ```
 
 `context.navId` increments on navigation and `context.url` changes — an agent can always tell
-whether the page moved. Manage the logical target with `plt session list|new|use|close`.
+whether the page moved. Use `--tab <id>` to target another tab for a single command.
 
 ## Extract
 
@@ -30,7 +30,7 @@ whether the page moved. Manage the logical target with `plt session list|new|use
 
 ```bash
 plt extract
-# 📍 https://example.com — Example Domain (navId=1, tab=7, session=pl-…)
+# 📍 https://example.com — Example Domain (navId=1, tab=7)
 # Example Domain
 # ...
 # [viewport 1512x857]
@@ -87,6 +87,36 @@ plt extract --article
 `--article` returns **Markdown**; an optional `--selector` restricts extraction to that
 element. Metadata is emitted as YAML frontmatter.
 
+## Links & forms
+
+Explore the interactive surface of a page (visible elements only by default):
+
+```bash
+plt links
+# - Docs -> https://example.com/docs
+# - Home | Dashboard -> https://example.com/ (x2)
+# [showing 12 of 12]
+
+plt links --selector "#nav" --limit 5   # scope + paging (pagination is by href group)
+
+plt forms
+# form 1: /login [POST]
+#   - <input type=text> Username name=user
+#   - <input type=password> Password name=pass value="********"
+#   - <button type=submit> Sign in
+# [showing 3 of 3]
+
+plt forms --all                          # include invisible fields
+```
+
+- `links` groups anchors by absolute `href` (`texts[]` + `count`); `javascript:`/empty/`#`
+  anchors are dropped. `total` = number of href groups.
+- `forms` groups controls by form `action`/`method`/`target` (a form-less group has no
+  `action`) and reports `name`/`type`/`value`/`labels` plus `checked`/`selected`/`disabled`/
+  `required`. Password values are masked. `total` = number of fields, and paging
+  (`--limit`/`--offset`) slices fields flat across groups.
+- Both cap collection (`truncated: true` when the cap is hit) before paging.
+
 ## Screenshot
 
 ```bash
@@ -116,7 +146,8 @@ plt click-text "Sign in"
 plt select "#country" --label "Japan"
 plt hover "#menu"
 plt scroll down
-plt scroll --selector "#sidebar" --amount 200
+plt scroll --selector "#sidebar" --amount 200   # scroll inside the element's own overflow
+plt scroll-to "#results li:last-child"          # bring an element into the page viewport
 ```
 
 Keys and combos (Playwright-style):
@@ -140,6 +171,16 @@ real keystrokes. Unknown multi-character keys return `INVALID_PARAMS`.
 `selector` may target the input itself, a `<label for=…>`, a wrapping label/fieldset, or a
 container. Resolution order: self-editable → `label[for]` → nearest label/fieldset (unique
 input) → unique descendant; several candidates without a `label[for]` → `TARGET_AMBIGUOUS`.
+
+### Selecting text
+
+```bash
+plt selection --selector "#quote"   # select an element's text, prints the selected string
+plt selection --text "Chapter 1"    # locate by visible text (ambiguous → TARGET_AMBIGUOUS)
+```
+
+Selection mutates the page's selection (input/textarea use `setSelectionRange`, everything
+else uses a `Range`). It returns `{ text }`.
 
 ## Search & in-page network
 
@@ -175,9 +216,46 @@ plt events
 plt logs --tail 20            # command ledger (JSON lines, secrets redacted)
 ```
 
+### Batch execution
+
+Run many commands in one process (one JSON object per line; `-` reads stdin):
+
+```bash
+cat > flow.jsonl <<'EOF'
+{"method":"goto","params":{"url":"https://example.com"}}
+{"method":"wait","params":{"selector":"h1"}}
+{"method":"extract","params":{"selector":"h1"}}
+EOF
+plt run flow.jsonl              # human output per step
+plt run flow.jsonl --json       # one JSON result per line
+plt run flow.jsonl --fail-fast  # stop at the first error
+```
+
+Per-line `tabId` overrides the global `--tab`. Exit code is `1` if any step failed (unless `--fail-fast` stops earlier).
+
 Any command with pending `tab.*` events appends a reminder: `🔔 2 new events, run \`plt events\``.
-If a session's tab is closed, its binding is cleared and the next command falls back to the
-most recently active tab.
+If the current tab is closed, it is cleared and the next command falls back to the most recently
+active tab.
+
+## Eval (advanced)
+
+`eval` is disabled by default; enable it on the server with `PARKINGLOT_ENABLE_EVAL=1`.
+
+```bash
+plt eval "return document.title"
+# Example Domain
+
+plt eval "const rows = [...document.querySelectorAll('h2')]; return rows.map(h => h.textContent);"
+# ["Section A","Section B"]
+
+plt eval --file script.js
+cat script.js | plt eval --stdin
+```
+
+The script is a **complete script** (multiple statements, must contain `return`) run in the
+page's **MAIN world** (so it can read page globals). The result must round-trip through JSON,
+otherwise `NOT_SERIALIZABLE`; returning `undefined` prints `(no return value)`. Pages with a
+strict `script-src` CSP can block it (an injection error is returned).
 
 ## Errors & exit codes
 
@@ -186,13 +264,13 @@ plt extract --selector "#nope"
 # ✖ [TARGET_NOT_FOUND] no element matches '#nope'    (exit 3)
 ```
 
-| Exit | Meaning                                                                    |
-| ---- | -------------------------------------------------------------------------- |
-| 0    | success                                                                    |
-| 2    | invalid request/params                                                     |
-| 3    | target/session error (`TARGET_*`, `SESSION_*`, `TAB_NOT_ACTIVE`, URL/host) |
-| 4    | extension offline / no tab (`EXTENSION_OFFLINE`, `EXTENSION_NO_TAB`)       |
-| 6    | timeout                                                                    |
-| 1    | other                                                                      |
+| Exit | Meaning                                                                                 |
+| ---- | --------------------------------------------------------------------------------------- |
+| 0    | success                                                                                 |
+| 2    | invalid request/params                                                                  |
+| 3    | target error (`TARGET_*`, `TAB_CLOSED`, `TAB_NOT_ACTIVE`, `NOT_SERIALIZABLE`, URL/host) |
+| 4    | extension offline / no tab (`EXTENSION_OFFLINE`, `EXTENSION_NO_TAB`)                    |
+| 6    | timeout                                                                                 |
+| 1    | other                                                                                   |
 
 Full code list and payload shapes: [`protocol.md`](./protocol.md).

@@ -73,6 +73,58 @@ describe('interaction actions', () => {
     const res = await executeDomAction('scroll', { direction: 'down' }, document, 1, 0);
     expect((res as { viewport: { width: number } }).viewport.width).toBeGreaterThan(0);
   });
+
+  it('scroll with a selector scrolls inside the element (scrollBy)', async () => {
+    document.body.innerHTML = '<div id="box" style="height:100px;overflow:auto"></div>';
+    const box = document.getElementById('box')!;
+    const calls: ScrollToOptions[] = [];
+    (box as unknown as { scrollBy: (o: ScrollToOptions) => void }).scrollBy = (o) => calls.push(o);
+    const res = (await executeDomAction(
+      'scroll',
+      { selector: '#box', amount: 300 },
+      document,
+      1,
+      0,
+    )) as {
+      viewport: unknown;
+    };
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.top).toBe(300);
+    expect(res.viewport).toBeDefined();
+  });
+
+  it('scroll-to brings the element into view and returns it', async () => {
+    document.body.innerHTML = '<div id="target">T</div>';
+    const el = document.getElementById('target')!;
+    const spy = vi.fn();
+    (el as unknown as { scrollIntoView: () => void }).scrollIntoView = spy;
+    const res = (await executeDomAction('scroll-to', { selector: '#target' }, document, 1, 0)) as {
+      element?: { tag?: string };
+    };
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(res.element?.tag).toBe('div');
+  });
+
+  it('dom-query returns matches with tag/class/text and total', async () => {
+    document.body.innerHTML =
+      '<div class="a">one</div><div class="a">two</div><div class="b">three</div>';
+    const res = (await executeDomAction('dom-query', { selector: '.a' }, document, 1, 0)) as {
+      matches: Array<{ tag: string; class?: string; text?: string }>;
+      total: number;
+    };
+    expect(res.total).toBe(2);
+    expect(res.matches[0]).toMatchObject({ tag: 'div', class: 'a', text: 'one' });
+  });
+
+  it('dom-query by visible text returns the best match', async () => {
+    document.body.innerHTML = '<button id="go">Sign in</button>';
+    const res = (await executeDomAction('dom-query', { text: 'Sign in' }, document, 1, 0)) as {
+      matches: Array<{ tag: string; id?: string }>;
+      total: number;
+    };
+    expect(res.total).toBe(1);
+    expect(res.matches[0]).toMatchObject({ tag: 'button', id: 'go' });
+  });
 });
 
 describe('resolveInput', () => {
@@ -267,14 +319,52 @@ describe('extract and wait', () => {
   });
 
   it('wait with selector polls until the element appears', async () => {
-    document.body.innerHTML = '<div id="late"></div>';
-    setTimeout(() => {
-      const el = document.getElementById('late')!;
-      el.textContent = 'now visible';
+    document.body.innerHTML = '<div id="host"></div>';
+    const timer = setTimeout(() => {
+      const el = document.createElement('div');
+      el.id = 'late';
+      document.getElementById('host')?.appendChild(el);
     }, 50);
-    const res = await executeDomAction('wait', { selector: '#late' }, document, 1, 0);
-    void res;
-    expect(true).toBe(true); // 未抛错即通过
+    try {
+      const res = await executeDomAction('wait', { selector: '#late' }, document, 1, 0);
+      void res;
+      expect(document.getElementById('late')).not.toBeNull();
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+});
+
+describe('selection', () => {
+  it('selects an element by CSS selector and returns its text', async () => {
+    document.body.innerHTML = '<p id="p">hello world</p>';
+    const res = (await executeDomAction('selection', { selector: '#p' }, document, 1, 0)) as {
+      text?: string;
+    };
+    expect(res.text).toBe('hello world');
+  });
+
+  it('selects an element by visible text', async () => {
+    document.body.innerHTML = '<div><span>Pick me</span></div>';
+    const res = (await executeDomAction('selection', { text: 'Pick me' }, document, 1, 0)) as {
+      text?: string;
+    };
+    expect(res.text).toBe('Pick me');
+  });
+
+  it('selects all text in an input and returns its value', async () => {
+    document.body.innerHTML = '<input id="i" value="abc" />';
+    const res = (await executeDomAction('selection', { selector: '#i' }, document, 1, 0)) as {
+      text?: string;
+    };
+    expect(res.text).toBe('abc');
+  });
+
+  it('rejects ambiguous visible text', async () => {
+    document.body.innerHTML = '<span>same</span><span>same</span>';
+    await expect(
+      executeDomAction('selection', { text: 'same' }, document, 1, 0),
+    ).rejects.toMatchObject({ code: 'TARGET_AMBIGUOUS' });
   });
 });
 
@@ -298,6 +388,26 @@ describe('parseSearchResults', () => {
       <div><a href="https://g.com/1"><h3>Google Result</h3></a></div>`;
     const results = parseSearchResults(document);
     expect(results[0]).toMatchObject({ title: 'Google Result' });
+  });
+
+  it('extracts a Google snippet when present', () => {
+    document.body.innerHTML = `
+      <div>
+        <a href="https://g.com/1"><h3>Title One</h3></a>
+        <div class="VwiC3b">A short summary.</div>
+      </div>`;
+    const results = parseSearchResults(document);
+    expect(results[0]).toMatchObject({ title: 'Title One', snippet: 'A short summary.' });
+  });
+
+  it('falls back to the longest non-title text block for a Google snippet', () => {
+    document.body.innerHTML = `
+      <div>
+        <a href="https://g.com/1"><h3>Title One</h3></a>
+        <div>This is a longer descriptive sentence for the result.</div>
+      </div>`;
+    const results = parseSearchResults(document);
+    expect(results[0]!.snippet).toBe('This is a longer descriptive sentence for the result.');
   });
 
   it('returns [] for a page without results', () => {

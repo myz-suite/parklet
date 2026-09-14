@@ -1,6 +1,6 @@
 {
   "name": "@parkinglot/server",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "ParkingLot: Drive a real browser owned by the human user. Relay daemon: WebSocket server, CLI + HTTP for agents, session registry, event cache, command ledger.",
   "license": "MIT",
   "keywords": [

@@ -4,7 +4,7 @@ import { loadConfig } from './config.js';
 import { EventCache, isCachedEvent } from './event-cache.js';
 import { Ledger } from './ledger.js';
 import { Router } from './router.js';
-import { SessionRegistry } from './session.js';
+import { TargetState } from './target.js';
 import { startHttp } from './http.js';
 import { ExtensionHub } from './ws/server.js';
 
@@ -25,25 +25,25 @@ export interface RunningServer {
 export async function startServer(overrides: Partial<ServerConfig> = {}): Promise<RunningServer> {
   const config: ServerConfig = { ...loadConfig(), ...overrides };
   const ledger = new Ledger(config.stateDir);
-  const registry = new SessionRegistry(config.stateDir);
+  const target = new TargetState();
   const events = new EventCache();
   const hub = new ExtensionHub(config.token);
-  const router = new Router({ config, registry, hub, ledger });
+  const router = new Router({ config, hub, ledger, target });
   hub.on('event', (event: EventMessage) => {
     if (isCachedEvent(event)) events.push(event);
-    // tab 关闭：主动解除所有绑定该 tab 的 session（tab.removed 的主动路径）
+    // tab 关闭：若正是当前目标 tab，则清除（下条命令回退最近激活 tab）
     if (event.event === 'tab.removed') {
       const tabId = event.params.tabId;
-      if (typeof tabId === 'number') registry.unbindTab(tabId);
+      if (typeof tabId === 'number') target.clearIf(tabId);
     }
   });
   const httpServer = startHttp({
     config,
     router,
-    registry,
     events,
     ledger,
     isExtensionOnline: () => hub.isOnline(),
+    currentTabId: () => target.get(),
   });
   hub.attach(httpServer, '/ws');
 

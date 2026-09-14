@@ -37,6 +37,22 @@ function envList(env: NodeJS.ProcessEnv, key: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+/**
+ * 计算最终禁用命令列表。eval 门控优先级：
+ * 1. `PARKINGLOT_DISABLED_COMMANDS` 显式包含 `eval` → 禁用（`PARKINGLOT_ENABLE_EVAL` 不能覆盖）
+ * 2. 否则 `PARKINGLOT_ENABLE_EVAL=1` → 放行 eval
+ * 3. 否则默认禁用 eval（即使 disable 列表非空但不含 eval）
+ *
+ * 注意：第 3 条是对旧行为的**破坏性安全修复**——旧实现仅当 disable 列表为空时才回填
+ * `eval`，因此把 `PARKINGLOT_DISABLED_COMMANDS` 设为任意非 eval 值会**隐式放行 eval**。
+ */
+export function resolveDisabledCommands(env: NodeJS.ProcessEnv = process.env): string[] {
+  const disabled = envList(env, 'PARKINGLOT_DISABLED_COMMANDS');
+  if (disabled.includes('eval')) return disabled;
+  if (env.PARKINGLOT_ENABLE_EVAL === '1') return disabled;
+  return disabled.length === 0 ? ['eval'] : [...disabled, 'eval'];
+}
+
 /** 加载并校验配置。token 若未提供则生成并持久化到 stateDir/token（0600）。 */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const stateDir = env.PARKINGLOT_STATE_DIR ?? join(homedir(), '.parkinglot');
@@ -53,8 +69,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     }
   }
 
-  const disabledCommands = envList(env, 'PARKINGLOT_DISABLED_COMMANDS');
-  if (disabledCommands.length === 0) disabledCommands.push('eval');
+  const disabledCommands = resolveDisabledCommands(env);
 
   return {
     port: envInt(env, 'PARKINGLOT_PORT', DEFAULT_PORT),
@@ -62,7 +77,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     token,
     allowedHosts: envList(env, 'PARKINGLOT_ALLOWED_HOSTS'),
     disabledCommands,
-    enableEval: env.PARKINGLOT_ENABLE_EVAL === '1',
+    // 反映 eval 的**最终**可用状态（显式禁用优先于 ENABLE_EVAL），供 status 展示
+    enableEval: !disabledCommands.includes('eval'),
     stateDir,
     commandTimeoutMs: envInt(env, 'PARKINGLOT_COMMAND_TIMEOUT_MS', DEFAULT_COMMAND_TIMEOUT_MS),
   };

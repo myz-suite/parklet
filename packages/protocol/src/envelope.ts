@@ -4,25 +4,23 @@ import type { ContextSnapshot } from './types.js';
 
 /**
  * 请求信封。params 可省略（NoopParams 命令）。
- * sessionId / tabId 为 server 寻址后注入的目标字段（与 Response 信封对称），
- * CLI/HTTP 客户端可选传入，extension 收到的请求总是携带已解析的目标。
+ * tabId 为 server 寻址后注入的目标字段（与 Response 信封对称），
+ * CLI/HTTP 客户端可选传入；extension 收到的请求总是携带已解析的目标。
  */
 export interface Request<M extends Method = Method> {
   id: string;
   method: M;
   params?: ParamsMap[M];
-  sessionId?: string;
   tabId?: number;
 }
 
 /**
- * 命令结果信封。三个公共字段统一携带寻址与连续性信息：
- * - sessionId / tabId：本次命令实际作用的会话与标签页（寻址解析结果）
+ * 命令结果信封。公共字段统一携带寻址与连续性信息：
+ * - tabId：本次命令实际作用的标签页（寻址解析结果）
  * - context：页面上下文快照（url/title/navId）——Agent 连续性的"自证"
  * data 存放命令特有结果。
  */
 export interface CommandResult<M extends Method = Method> {
-  sessionId?: string;
   tabId?: number;
   context?: ContextSnapshot;
   data: ResultMap[M];

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
@@ -23,7 +23,8 @@ interface GlobalOpts {
   server: string;
   json: boolean;
   timeout: string;
-  session?: string;
+  /** 显式目标 tab（缺省用 server 的当前目标 tab / 最近激活 tab） */
+  tab?: number;
   /** screenshot 的 --path（写文件目标） */
   path?: string;
   /** screenshot 的 --format（决定默认落盘后缀） */
@@ -58,7 +59,7 @@ async function callCommand(
   opts: GlobalOpts,
 ): Promise<Response | ProtocolError> {
   const base = opts.server.replace(/\/+$/, '');
-  const body = { method, params, sessionId: opts.session };
+  const body = { method, params, tabId: opts.tab };
   let httpRes: Response;
   try {
     const res = await fetch(`${base}/api/command`, {
@@ -78,35 +79,6 @@ async function callCommand(
     } satisfies ProtocolError;
   }
   return httpRes;
-}
-
-async function callSession(
-  action: 'new' | 'use' | 'close',
-  opts: GlobalOpts,
-  extra: Record<string, unknown> = {},
-): Promise<Record<string, unknown> | ProtocolError> {
-  const base = opts.server.replace(/\/+$/, '');
-  try {
-    const res = await fetch(`${base}/api/session`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action, ...extra }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    return (await res.json()) as Record<string, unknown>;
-  } catch (err) {
-    return { error: `cannot reach server at ${base}: ${(err as Error).message}` };
-  }
-}
-
-async function fetchStatus(opts: GlobalOpts): Promise<Record<string, unknown> | ProtocolError> {
-  const base = opts.server.replace(/\/+$/, '');
-  try {
-    const res = await fetch(`${base}/api/status`, { signal: AbortSignal.timeout(10_000) });
-    return (await res.json()) as Record<string, unknown>;
-  } catch (err) {
-    return { error: `cannot reach server at ${base}: ${(err as Error).message}` };
-  }
 }
 
 async function fetchLedger(
@@ -146,14 +118,14 @@ function exitCodeFor(code: ErrorCode | undefined): number {
     case 'INVALID_PARAMS':
     case 'UNKNOWN_METHOD':
       return 2;
-    case 'SESSION_NOT_FOUND':
-    case 'SESSION_TAB_CLOSED':
+    case 'TAB_CLOSED':
     case 'TARGET_NOT_FOUND':
     case 'TARGET_AMBIGUOUS':
     case 'TAB_NOT_ACTIVE':
     case 'URL_INVALID':
     case 'HOST_NOT_ALLOWED':
     case 'EVAL_DISABLED':
+    case 'NOT_SERIALIZABLE':
       return 3;
     case 'EXTENSION_OFFLINE':
     case 'EXTENSION_NO_TAB':
@@ -166,16 +138,27 @@ function exitCodeFor(code: ErrorCode | undefined): number {
 }
 
 function formatContext(result: Response['result']): string {
-  const { context, sessionId } = result;
+  const { context } = result;
   if (!context) return '';
-  return `📍 ${context.url} — ${context.title} (navId=${context.navId}, tab=${context.tabId}${sessionId ? `, session=${sessionId}` : ''})`;
+  return `📍 ${context.url} — ${context.title} (navId=${context.navId}, tab=${context.tabId})`;
+}
+
+/** links / forms 的分页提示行（total 存在时打印）。 */
+function paginationLine(
+  shown: number,
+  d: { total?: number; offset?: number; limit?: number; truncated?: boolean },
+): void {
+  if (d.truncated === true) console.log('(truncated at collection limit)');
+  if (d.total === undefined) return;
+  const offset = d.offset !== undefined ? `, offset=${d.offset}` : '';
+  const limit = d.limit !== undefined ? `, limit=${d.limit}` : '';
+  console.log(`[showing ${shown} of ${d.total}${offset}${limit}]`);
 }
 
 function printResult(method: string, result: Response['result'], opts: GlobalOpts): void {
   if (opts.json) {
     console.log(
       JSON.stringify({
-        sessionId: result.sessionId,
         tabId: result.tabId,
         context: result.context,
         data: result.data,
@@ -196,14 +179,11 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
     case 'get-status': {
       const d = data as {
         extensionConnected?: boolean;
-        sessions?: Array<{ id: string; tabId?: number; lastUsedAt: string }>;
+        currentTabId?: number;
         config?: Record<string, unknown>;
       };
       console.log(`extension: ${d.extensionConnected ? 'connected ✅' : 'offline ❌'}`);
-      console.log(`sessions: ${(d.sessions ?? []).length}`);
-      for (const s of d.sessions ?? []) {
-        console.log(`  ${s.id}  tab=${s.tabId ?? '-'}  last=${s.lastUsedAt}`);
-      }
+      console.log(`current tab: ${d.currentTabId ?? '-'}`);
       break;
     }
     case 'extract': {
@@ -212,6 +192,7 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
         snapshot?: { visibleText?: string; viewport?: { width: number; height: number } };
         texts?: string[];
         nodes?: unknown;
+        items?: string[];
         total?: number;
         offset?: number;
         limit?: number;
@@ -257,6 +238,9 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
       } else if (Array.isArray(d.texts)) {
         d.texts.forEach((t, i) => console.log(`[${i + 1}] ${t}`));
         if (range) console.log(range);
+      } else if (Array.isArray(d.items)) {
+        d.items.forEach((html, i) => console.log(`[${i + 1}] ${html}`));
+        if (range) console.log(range);
       } else if (d.nodes !== undefined) {
         console.log(opts.prettify ? JSON.stringify(d.nodes, null, 2) : JSON.stringify(d.nodes));
         if (d.truncated === true) console.log('(truncated at node budget)');
@@ -280,13 +264,108 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
       console.log(`viewport: ${d.viewport?.width}x${d.viewport?.height}  scrollY: ${d.scrollY}`);
       break;
     }
+    case 'eval': {
+      const d = data as { value?: unknown };
+      if (d.value === undefined) {
+        console.log('(no return value)');
+      } else if (typeof d.value === 'string') {
+        console.log(d.value);
+      } else {
+        console.log(JSON.stringify(d.value, null, 2));
+      }
+      break;
+    }
+    case 'selection': {
+      const d = data as { text?: string };
+      console.log(d.text ?? '');
+      break;
+    }
+    case 'dom-query': {
+      const d = data as {
+        matches?: Array<{ tag: string; class?: string; id?: string; text?: string }>;
+        total?: number;
+      };
+      for (const m of d.matches ?? []) {
+        const id = m.id !== undefined ? `#${m.id}` : '';
+        const cls = m.class !== undefined ? `.${m.class.split(/\s+/).join('.')}` : '';
+        console.log(`<${m.tag}${id}${cls}> ${(m.text ?? '').slice(0, 100)}`);
+      }
+      console.log(`(${d.matches?.length ?? 0} of ${d.total ?? 0})`);
+      break;
+    }
+    case 'links': {
+      const d = data as {
+        links?: Array<{ href: string; texts: string[]; count: number }>;
+        total?: number;
+        offset?: number;
+        limit?: number;
+        truncated?: boolean;
+      };
+      const links = d.links ?? [];
+      for (const l of links) {
+        const label = l.texts.length > 0 ? l.texts.join(' | ') : '(no text)';
+        const times = l.count > 1 ? ` (x${l.count})` : '';
+        console.log(`- ${label} -> ${l.href}${times}`);
+      }
+      paginationLine(links.length, d);
+      break;
+    }
+    case 'forms': {
+      const d = data as {
+        forms?: Array<{
+          action?: string;
+          method?: string;
+          target?: string;
+          fields: Array<{
+            tag: string;
+            type: string;
+            name?: string;
+            value?: string;
+            labels: string[];
+            checked?: boolean;
+            selected?: string[];
+            disabled?: boolean;
+            required?: boolean;
+            id?: string;
+          }>;
+        }>;
+        total?: number;
+        offset?: number;
+        limit?: number;
+        truncated?: boolean;
+      };
+      const forms = d.forms ?? [];
+      let fieldCount = 0;
+      forms.forEach((form, i) => {
+        const head = form.action ?? '(no form)';
+        const meta = [form.method, form.target].filter(Boolean).join(' ');
+        console.log(`form ${i + 1}: ${head}${meta ? ` [${meta}]` : ''}`);
+        for (const f of form.fields) {
+          fieldCount += 1;
+          const label = f.labels.length > 0 ? f.labels.join(' / ') : '(no label)';
+          const name = f.name !== undefined ? ` name=${f.name}` : '';
+          const value = f.value !== undefined ? ` value=${JSON.stringify(f.value)}` : '';
+          const state =
+            f.checked !== undefined
+              ? ` checked=${f.checked}`
+              : f.selected !== undefined
+                ? ` selected=${JSON.stringify(f.selected)}`
+                : '';
+          const flags = `${f.disabled ? ' disabled' : ''}${f.required ? ' required' : ''}`;
+          console.log(`  - <${f.tag} type=${f.type}> ${label}${name}${value}${state}${flags}`);
+        }
+      });
+      paginationLine(fieldCount, d);
+      break;
+    }
     case 'click':
     case 'click-text':
     case 'fill':
     case 'type':
     case 'press':
     case 'hover':
-    case 'select': {
+    case 'select':
+    case 'scroll-to': {
       const d = data as {
         element?: { tag: string; text?: string; box?: { x: number; y: number } };
       };
@@ -396,7 +475,7 @@ async function run(
     server: String(opts.server ?? 'http://127.0.0.1:8787'),
     json: Boolean(opts.json),
     timeout: String(opts.timeout ?? '30000'),
-    session: typeof opts.session === 'string' ? opts.session : undefined,
+    tab: opts.tab !== undefined ? Number(opts.tab) : undefined,
     path: typeof opts.path === 'string' ? opts.path : undefined,
     format: typeof opts.format === 'string' ? opts.format : undefined,
     prettify: Boolean(opts.prettify),
@@ -421,19 +500,19 @@ export function buildProgram(): Command {
     .option('--server <url>', 'server base URL', 'http://127.0.0.1:8787')
     .option('--json', 'output structured JSON (envelope)')
     .option('--timeout <ms>', 'command timeout in milliseconds', '30000')
-    .option('--session <id>', 'session id to target (defaults to the server default session)')
+    .option('--tab <id>', 'target tab id (defaults to the server current tab / last active tab)')
     .addHelpText(
       'after',
       `
 Examples:
-  plt goto https://example.com     navigate (auto-creates a session)
+  plt goto https://example.com     navigate (sets the current tab)
   plt extract --article            article body as Markdown
   plt extract --mode structured --selector "article ul" --limit 10
   plt screenshot                   save screenshot-<timestamp>.png in the cwd
   plt press Control+c              Playwright-style key combo
 
 Exit codes:
-  0 success · 2 invalid params · 3 target/session error · 4 extension offline · 6 timeout · 1 other
+  0 success · 2 invalid params · 3 target error · 4 extension offline · 6 timeout · 1 other
 
 Run \`plt <command> --help\` for command-specific options.`,
     );
@@ -443,7 +522,7 @@ Run \`plt <command> --help\` for command-specific options.`,
     program,
     'status',
     'get-status',
-    'show server, extension and session status',
+    'show server, extension and current-tab status',
     () => ({}),
   );
   register(program, 'ping', 'ping', 'connectivity check', () => ({}));
@@ -534,6 +613,17 @@ Run \`plt <command> --help\` for command-specific options.`,
         .option('--value <v>', 'option value')
         .option('--label <l>', 'option label (substring match)'),
   );
+  register(
+    program,
+    'selection',
+    'selection',
+    'select text on the page (by CSS selector or visible text)',
+    (opts) => ({ selector: opts.selector, text: opts.text }),
+    (c) =>
+      c
+        .option('--selector <css>', 'CSS selector of the element to select')
+        .option('--text <text>', 'visible text of the element to select'),
+  );
 
   // 滚动 / 视图
   register(
@@ -559,9 +649,17 @@ Run \`plt <command> --help\` for command-specific options.`,
     (c) =>
       c
         .argument('[direction|amount]', 'up|down|top|bottom or pixel amount')
-        .option('--selector <css>', 'scroll a specific element')
+        .option('--selector <css>', 'scroll inside this element (overflow container)')
         .option('--direction <d>')
         .option('--amount <n>'),
+  );
+  register(
+    program,
+    'scroll-to',
+    'scroll-to',
+    'scroll the page so the element is in view',
+    (_opts, args) => ({ selector: args[0] }),
+    (c) => c.argument('<selector>', 'CSS selector to bring into view'),
   );
   register(
     program,
@@ -597,16 +695,18 @@ Run \`plt <command> --help\` for command-specific options.`,
       depth: opts.depth !== undefined ? Number(opts.depth) : undefined,
       visibleOnly: opts.visibleOnly,
       maxChars: opts.maxChars !== undefined ? Number(opts.maxChars) : undefined,
+      exclude: opts.exclude,
     }),
     (c) =>
       c
-        .option('--mode <m>', 'text|structured (default: text)')
+        .option('--mode <m>', 'text|structured|html (default: text)')
         .option('--article', 'extract article body (defuddle)')
         .option('--selector <css>', 'CSS selector (first-level list)')
         .option('--depth <n>', 'structured recursion depth (default 3)')
         .option('--offset <n>', 'skip first N elements of the first-level list')
         .option('--limit <n>', 'max elements of the first-level list (element count)')
         .option('--max-chars <n>', 'truncate text mode per segment (default: no truncation)')
+        .option('--exclude <css>', 'drop elements matching this CSS before extracting')
         .option('--prettify', 'pretty-print structured JSON')
         .option('--visible-only', 'filter invisible first-level elements'),
   );
@@ -616,6 +716,59 @@ Run \`plt <command> --help\` for command-specific options.`,
     'get-page-info',
     'show page url/title/viewport/scroll',
     () => ({}),
+  );
+  register(
+    program,
+    'dom-query',
+    'dom-query',
+    'list elements matching a CSS selector or visible text (exploration)',
+    (opts, args) => ({
+      selector: args[0] ?? opts.selector,
+      text: opts.text,
+      limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
+    }),
+    (c) =>
+      c
+        .argument('[selector]', 'CSS selector')
+        .option('--selector <css>', 'CSS selector (alternative to positional)')
+        .option('--text <text>', 'match by visible text')
+        .option('--limit <n>', 'max matches (default 20)'),
+  );
+  register(
+    program,
+    'links',
+    'links',
+    'list visible links grouped by href',
+    (opts) => ({
+      selector: opts.selector,
+      offset: opts.offset !== undefined ? Number(opts.offset) : undefined,
+      limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
+      visibleOnly: opts.all ? false : undefined,
+    }),
+    (c) =>
+      c
+        .option('--selector <css>', 'scope to elements matching this CSS selector')
+        .option('--offset <n>', 'skip first N href groups')
+        .option('--limit <n>', 'max N href groups')
+        .option('--all', 'include invisible links'),
+  );
+  register(
+    program,
+    'forms',
+    'forms',
+    'list visible form fields grouped by form',
+    (opts) => ({
+      selector: opts.selector,
+      offset: opts.offset !== undefined ? Number(opts.offset) : undefined,
+      limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
+      visibleOnly: opts.all ? false : undefined,
+    }),
+    (c) =>
+      c
+        .option('--selector <css>', 'scope to elements matching this CSS selector')
+        .option('--offset <n>', 'skip first N fields')
+        .option('--limit <n>', 'max N fields')
+        .option('--all', 'include invisible fields'),
   );
 
   // 页面内网络
@@ -703,6 +856,20 @@ Run \`plt <command> --help\` for command-specific options.`,
       c.option('--ms <n>').option('--selector <css>').option('--condition <c>', 'networkidle|load'),
   );
 
+  // 高级：页面脚本执行（默认禁用，需 server 侧 PARKINGLOT_ENABLE_EVAL=1）
+  register(
+    program,
+    'eval',
+    'eval',
+    'run a script in the page context (must contain `return`; server must enable eval)',
+    (opts, args) => ({ script: resolveEvalScript(opts, args) }),
+    (c) =>
+      c
+        .argument('[script]', 'inline script (must contain `return`)')
+        .option('--file <path>', 'read the script from a file')
+        .option('--stdin', 'read the script from stdin'),
+  );
+
   // 启动 relay server（npm -g 安装后的便捷入口）
   program
     .command('serve')
@@ -734,54 +901,62 @@ Run \`plt <command> --help\` for command-specific options.`,
       process.on('SIGTERM', () => void shutdown());
     });
 
-  // 会话管理（server 本地操作）
+  // 批量执行：一次进程按顺序执行多条命令（JSON lines）
   program
-    .command('session')
-    .description('manage sessions (continuity units)')
-    .argument('<action>', 'list|new|use|close')
-    .argument('[id]', 'session id (use/close)')
-    .action(async function (this: Command, action: string, id: string | undefined) {
-      const opts = this.optsWithGlobals() as Record<string, unknown>;
-      const g = globalOptsFrom(opts);
-      if (action === 'list') {
-        const status = await fetchStatus(g);
-        if ('error' in status) {
-          printError({ code: 'EXTENSION_OFFLINE', message: String(status.error) }, g);
-          process.exitCode = 4;
-          return;
+    .command('run')
+    .description('run a batch of commands from a JSON-lines file (or stdin), one per line')
+    .argument('[file]', "file with one {method, params?, tabId?} per line ('-' = stdin)")
+    .option('--fail-fast', 'stop at the first error', false)
+    .action(async function (this: Command, file: string | undefined) {
+      const globals = this.optsWithGlobals() as Record<string, unknown>;
+      const g = globalOptsFrom(globals);
+      const failFast = Boolean(this.opts().failFast);
+      const raw =
+        file === undefined || file === '-' ? readFileSync(0, 'utf8') : readFileSync(file, 'utf8');
+      const lines = raw
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !l.startsWith('#'));
+      let failures = 0;
+      let index = 0;
+      for (const line of lines) {
+        index += 1;
+        let entry: { method?: string; params?: unknown; tabId?: number };
+        try {
+          entry = JSON.parse(line) as typeof entry;
+        } catch {
+          failures += 1;
+          console.error(`#${index}: invalid JSON line`);
+          if (failFast) break;
+          continue;
         }
-        const sessions = (status.sessions ?? []) as Array<{
-          id: string;
-          tabId?: number;
-          lastUsedAt: string;
-        }>;
-        for (const s of sessions) {
-          const def = status.defaultSessionId === s.id ? ' (default)' : '';
-          console.log(`${s.id}${def}  tab=${s.tabId ?? '-'}  last=${s.lastUsedAt}`);
+        if (typeof entry.method !== 'string') {
+          failures += 1;
+          console.error(`#${index}: missing 'method'`);
+          if (failFast) break;
+          continue;
         }
-        return;
+        const g2: GlobalOpts = entry.tabId !== undefined ? { ...g, tab: entry.tabId } : g;
+        if (!g.json) console.log(`#${index} ${entry.method}`);
+        const res = await callCommand(
+          entry.method,
+          (entry.params ?? {}) as Record<string, unknown>,
+          g2,
+        );
+        if ('error' in res) {
+          failures += 1;
+          printError(res.error, g);
+          if (failFast) {
+            process.exitCode = exitCodeFor(res.error.code);
+            return;
+          }
+        } else if (g.json) {
+          console.log(JSON.stringify({ ...res.result }));
+        } else {
+          printResult(entry.method, res.result, g2);
+        }
       }
-      const map: Record<string, 'new' | 'use' | 'close'> = {
-        new: 'new',
-        use: 'use',
-        close: 'close',
-      };
-      const act = map[action];
-      if (!act) {
-        console.error(`unknown session action '${action}' (list|new|use|close)`);
-        process.exitCode = 2;
-        return;
-      }
-      const res = await callSession(act, g, { id });
-      if ('error' in res) {
-        console.error(`✖ ${String(res.error)}`);
-        process.exitCode = 3;
-        return;
-      }
-      const s = res.session as { id?: string; tabId?: number } | undefined;
-      console.log(
-        `session ${s?.id ?? '?'} ${res.ok ? (act === 'close' ? 'closed' : 'ok') : 'not found'}${s?.tabId !== undefined ? ` tab=${s.tabId}` : ''}`,
-      );
+      if (failures > 0) process.exitCode = 1;
     });
 
   // 日志
@@ -857,10 +1032,15 @@ Run \`plt <command> --help\` for command-specific options.`,
     press: 'Interaction',
     hover: 'Interaction',
     select: 'Interaction',
+    selection: 'Interaction',
     scroll: 'View',
+    'scroll-to': 'View',
     screenshot: 'View',
     extract: 'Extraction',
     'page-info': 'Extraction',
+    'dom-query': 'Extraction',
+    links: 'Extraction',
+    forms: 'Extraction',
     fetch: 'Network',
     search: 'Network',
     tabs: 'Tabs',
@@ -870,9 +1050,10 @@ Run \`plt <command> --help\` for command-specific options.`,
     wait: 'Wait',
     status: 'Session',
     ping: 'Session',
-    session: 'Session',
+    eval: 'Advanced',
     logs: 'Ops',
     events: 'Ops',
+    run: 'Ops',
     serve: 'Server',
   };
   for (const cmd of program.commands) {
@@ -887,12 +1068,31 @@ function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
+/** 解析 eval 的脚本来源：inline / --file / --stdin 三选一。 */
+function resolveEvalScript(opts: Record<string, unknown>, args: string[]): string {
+  const inline = args[0];
+  const fromFile = typeof opts.file === 'string' ? opts.file : undefined;
+  const fromStdin = Boolean(opts.stdin);
+  const count = [inline !== undefined, fromFile !== undefined, fromStdin].filter(Boolean).length;
+  if (count === 0) {
+    console.error('✖ eval needs a script: `plt eval "<script>"`, `--file <path>`, or `--stdin`');
+    process.exit(2);
+  }
+  if (count > 1) {
+    console.error('✖ eval accepts only one of: inline script, --file, --stdin');
+    process.exit(2);
+  }
+  if (fromFile !== undefined) return readFileSync(fromFile, 'utf8');
+  if (fromStdin) return readFileSync(0, 'utf8');
+  return inline!;
+}
+
 function globalOptsFrom(opts: Record<string, unknown>): GlobalOpts {
   return {
     server: String(opts.server ?? 'http://127.0.0.1:8787'),
     json: Boolean(opts.json),
     timeout: String(opts.timeout ?? '30000'),
-    session: typeof opts.session === 'string' ? opts.session : undefined,
+    tab: opts.tab !== undefined ? Number(opts.tab) : undefined,
   };
 }
 

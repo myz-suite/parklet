@@ -91,9 +91,23 @@ describe('validateParams', () => {
       }).success,
     ).toBe(true);
     expect(validateParams('extract', { article: true, selector: 'article' }).success).toBe(true);
+    expect(validateParams('extract', { mode: 'html', selector: '#x' }).success).toBe(true);
+    expect(validateParams('extract', { mode: 'markdown' }).success).toBe(false);
+    expect(validateParams('extract', { exclude: '.noise' }).success).toBe(true);
     expect(validateParams('extract', { article: true, mode: 'text' }).success).toBe(false);
     expect(validateParams('extract', { depth: -1 }).success).toBe(false);
     expect(validateParams('extract', { limit: 0 }).success).toBe(false);
+  });
+
+  it('requires a selector for scroll-to', () => {
+    expect(validateParams('scroll-to', { selector: '#x' }).success).toBe(true);
+    expect(validateParams('scroll-to', {}).success).toBe(false);
+  });
+
+  it('requires selector or text for dom-query', () => {
+    expect(validateParams('dom-query', { selector: '#x' }).success).toBe(true);
+    expect(validateParams('dom-query', { text: 'hi', limit: 5 }).success).toBe(true);
+    expect(validateParams('dom-query', {}).success).toBe(false);
   });
 
   it('accepts a screenshot selector', () => {
@@ -107,6 +121,31 @@ describe('validateParams', () => {
     expect(validateParams('search', { query: 'x', page: 0 }).success).toBe(false);
     expect(validateParams('search', { query: 'x', page: -1 }).success).toBe(false);
     expect(validateParams('search', { query: 'x', page: 1.5 }).success).toBe(false);
+  });
+
+  it('requires selector or text for selection', () => {
+    expect(validateParams('selection', {}).success).toBe(false);
+    expect(validateParams('selection', { selector: '#p' }).success).toBe(true);
+    expect(validateParams('selection', { text: 'hello' }).success).toBe(true);
+    expect(validateParams('selection', { selector: '' }).success).toBe(false);
+  });
+
+  it('validates links / forms params (paging is element/field level)', () => {
+    expect(validateParams('links', {}).success).toBe(true);
+    expect(
+      validateParams('links', { selector: '#nav', offset: 5, limit: 10, visibleOnly: false })
+        .success,
+    ).toBe(true);
+    expect(validateParams('links', { limit: 0 }).success).toBe(false);
+    expect(validateParams('links', { offset: -1 }).success).toBe(false);
+    expect(validateParams('forms', { limit: 10 }).success).toBe(true);
+    expect(validateParams('forms', { limit: 1.5 }).success).toBe(false);
+  });
+
+  it('requires a non-empty script for eval', () => {
+    expect(validateParams('eval', { script: 'return 1' }).success).toBe(true);
+    expect(validateParams('eval', { script: '' }).success).toBe(false);
+    expect(validateParams('eval', {}).success).toBe(false);
   });
 
   it('validates every declared method against its schema', () => {
@@ -123,7 +162,6 @@ describe('response / error / event schemas', () => {
     const r = responseSchema.safeParse({
       id: '1',
       result: {
-        sessionId: 'pl-1',
         tabId: 7,
         context: { url: 'https://example.com', title: 'Ex', navId: 2, tabId: 7 },
         data: { value: 42 },

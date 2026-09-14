@@ -14,14 +14,15 @@ export interface RunningServer {
   stop: () => void;
 }
 
-/** 启动 parkinglot-server（随机/固定端口 + 临时 state dir），返回 base url 与配对 token。 */
-export async function startServer(): Promise<RunningServer> {
+/** 启动 parkinglot-server（固定端口 + 临时 state dir），返回 base url 与配对 token。 */
+export async function startServer(opts: { enableEval?: boolean } = {}): Promise<RunningServer> {
   const stateDir = mkdtempSync(join(tmpdir(), 'plt-e2e-'));
   const proc = spawn(process.execPath, [join(process.cwd(), 'packages/server/dist/index.js')], {
     env: {
       ...process.env,
       PARKINGLOT_PORT: String(E2E_PORT),
       PARKINGLOT_STATE_DIR: stateDir,
+      ...(opts.enableEval ? { PARKINGLOT_ENABLE_EVAL: '1' } : {}),
     },
     stdio: 'ignore',
   });
@@ -173,6 +174,23 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
       send(`<html><body><h1>submitted</h1><p id="greeting">hello ${name}</p></body></html>`);
       return;
     }
+    // 富表单：labels / password / checkbox / select / textarea / submit（links & forms 测试）
+    if (url.pathname === '/form-rich') {
+      send(`<!doctype html><html><body>
+<h1>rich-form</h1>
+<form action="/submitted" method="post">
+  <label for="user">Username</label>
+  <input id="user" name="user" value="">
+  <label for="pw">Password</label>
+  <input id="pw" name="pw" type="password" value="secret">
+  <input type="checkbox" name="remember" checked>
+  <select name="country"><option value="jp">Japan</option><option value="us" selected>USA</option></select>
+  <textarea name="bio"></textarea>
+  <button type="submit">Sign in</button>
+</form>
+</body></html>`);
+      return;
+    }
     if (url.pathname === '/api/echo') {
       send(
         JSON.stringify({
@@ -244,6 +262,40 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
   <li><a href="/target-page?r=1">Result one for ${query}</a></li>
   <li><a href="/target-page?r=2">Result two for ${query}</a></li>
 </ol>
+</body></html>`);
+      return;
+    }
+    // 懒加载列表：滚动内部容器时追加行（scroll --selector 测试）
+    if (url.pathname === '/lazy') {
+      send(`<!doctype html><html><body>
+<h1>lazy</h1>
+<div id="list" style="height:200px;overflow:auto;border:1px solid #ccc"><div id="rows"></div></div>
+<script>
+  const rows = document.getElementById('rows');
+  let n = 0;
+  function add(k) {
+    for (let i = 0; i < k; i += 1) {
+      const d = document.createElement('div');
+      d.className = 'row';
+      d.style.height = '40px';
+      d.textContent = 'row ' + (n++);
+      rows.appendChild(d);
+    }
+  }
+  add(10);
+  document.getElementById('list').addEventListener('scroll', () => add(10));
+</script>
+</body></html>`);
+      return;
+    }
+    // 查询/去噪：匹配元素 + 噪声按钮（dom-query / exclude 测试）
+    if (url.pathname === '/query') {
+      send(`<!doctype html><html><body>
+<div id="host">
+  <div class="item">alpha</div>
+  <div class="item">beta</div>
+  <button class="noise">Copy</button>
+</div>
 </body></html>`);
       return;
     }

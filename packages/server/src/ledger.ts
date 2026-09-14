@@ -12,7 +12,6 @@ export interface LedgerEntry {
   outcome: LedgerOutcome;
   code?: string;
   durationMs?: number;
-  sessionId?: string;
   tabId?: number;
 }
 
@@ -33,7 +32,7 @@ const SENSITIVE_KEYS = new Set([
   'body',
   'value',
   'headers',
-  'expression',
+  'script',
 ]);
 
 const MAX_STRING = 256;

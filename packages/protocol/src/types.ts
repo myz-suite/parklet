@@ -40,6 +40,54 @@ export interface DomNode {
   children: DomNode[];
 }
 
+/** links 命令：按 href 分组后的链接条目。 */
+export interface LinkInfo {
+  /** 解析后的绝对 URL（element.href） */
+  href: string;
+  /** 同一 href 下的文本，DOM 顺序，按精确字符串去重 */
+  texts: string[];
+  /** 该 href 在（visibleOnly 过滤后）结果中的出现次数 */
+  count: number;
+}
+
+/** forms 命令：归一化后的表单字段。 */
+export interface FormFieldInfo {
+  /** input | select | textarea | button */
+  tag: string;
+  /** input.type / 'select' / 'textarea' / button.type */
+  type: string;
+  name?: string;
+  /** 当前值（file 不回传；password 脱敏为 '********'） */
+  value?: string;
+  /** label[for] > 包裹 label > aria-label > placeholder */
+  labels: string[];
+  checked?: boolean;
+  /** select 的已选项 value */
+  selected?: string[];
+  disabled?: boolean;
+  required?: boolean;
+  id?: string;
+}
+
+/** forms 命令：按 action/method/target 分组后的表单。 */
+export interface FormInfo {
+  /** 缺省（无 form 归属）为 undefined */
+  action?: string;
+  /** 归一化大写，缺省 GET */
+  method?: string;
+  target?: string;
+  fields: FormFieldInfo[];
+}
+
+/** dom-query 命令：单个匹配元素的概要（用于探索，不含子树）。 */
+export interface DomQueryMatch {
+  tag: string;
+  class?: string;
+  id?: string;
+  text?: string;
+  box?: ElementBox;
+}
+
 export interface PageSnapshot {
   context: ContextSnapshot;
   visibleText: string;
@@ -52,13 +100,6 @@ export interface TabInfo {
   title: string;
   url: string;
   active: boolean;
-}
-
-export interface SessionInfo {
-  id: string;
-  tabId?: number;
-  createdAt: string;
-  lastUsedAt: string;
 }
 
 export interface SearchResult {

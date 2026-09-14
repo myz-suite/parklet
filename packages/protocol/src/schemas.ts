@@ -67,6 +67,14 @@ export const paramsSchemas = {
     .refine((p) => p.value !== undefined || p.label !== undefined, {
       message: 'select 需要提供 value 或 label（至少其一）',
     }),
+  selection: z
+    .object({
+      selector: z.string().min(1).optional(),
+      text: z.string().min(1).optional(),
+    })
+    .refine((p) => p.selector !== undefined || p.text !== undefined, {
+      message: 'selection 需要提供 selector 或 text（至少其一）',
+    }),
   // 滚动 / 视图
   scroll: z
     .object({
@@ -86,10 +94,11 @@ export const paramsSchemas = {
     selector: z.string().min(1).optional(),
     path: z.string().optional(),
   }),
+  'scroll-to': z.object({ selector: z.string().min(1) }),
   // 提取
   extract: z
     .object({
-      mode: z.enum(['text', 'structured']).optional(),
+      mode: z.enum(['text', 'structured', 'html']).optional(),
       article: z.boolean().optional(),
       selector: z.string().min(1).optional(),
       offset: z.number().int().nonnegative().optional(),
@@ -97,11 +106,33 @@ export const paramsSchemas = {
       depth: z.number().int().nonnegative().optional(),
       visibleOnly: z.boolean().optional(),
       maxChars: z.number().int().positive().optional(),
+      exclude: z.string().min(1).optional(),
     })
     .refine((p) => !(p.article === true && p.mode !== undefined), {
       message: 'extract 的 article 与 mode 互斥（article=true 时不可同时提供 mode）',
     }),
   'get-page-info': noopSchema,
+  'dom-query': z
+    .object({
+      selector: z.string().min(1).optional(),
+      text: z.string().min(1).optional(),
+      limit: z.number().int().positive().optional(),
+    })
+    .refine((p) => p.selector !== undefined || p.text !== undefined, {
+      message: 'dom-query 需要提供 selector 或 text（至少其一）',
+    }),
+  links: z.object({
+    selector: z.string().min(1).optional(),
+    offset: z.number().int().nonnegative().optional(),
+    limit: z.number().int().positive().optional(),
+    visibleOnly: z.boolean().optional(),
+  }),
+  forms: z.object({
+    selector: z.string().min(1).optional(),
+    offset: z.number().int().nonnegative().optional(),
+    limit: z.number().int().positive().optional(),
+    visibleOnly: z.boolean().optional(),
+  }),
   // 页面内网络
   fetch: z.object({
     url: httpUrlSchema,
@@ -134,7 +165,7 @@ export const paramsSchemas = {
   ping: noopSchema,
   'get-status': noopSchema,
   // 高级
-  eval: z.object({ expression: z.string().min(1) }),
+  eval: z.object({ script: z.string().min(1) }),
 } satisfies { [M in Method]: z.ZodType<ParamsMap[M]> };
 
 export type ParamsSchemaOf<M extends Method> = (typeof paramsSchemas)[M];
@@ -158,12 +189,10 @@ export const requestSchema = z.object({
   id: z.string().min(1),
   method: z.enum(METHODS),
   params: z.unknown().optional(),
-  sessionId: z.string().optional(),
   tabId: z.number().int().nonnegative().optional(),
 });
 
 export const commandResultSchema = z.object({
-  sessionId: z.string().optional(),
   tabId: z.number().int().nonnegative().optional(),
   context: contextSchema.optional(),
   data: z.unknown(),

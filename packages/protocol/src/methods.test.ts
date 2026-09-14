@@ -29,15 +29,20 @@ describe('method metadata', () => {
       'press',
       'reload',
       'scroll',
+      'scroll-to',
       'select',
+      'selection',
       'type',
     ]);
 
     // 只读操作（永不挂起）
     expect(byAccess('never')).toEqual([
+      'dom-query',
       'extract',
+      'forms',
       'get-page-info',
       'get-status',
+      'links',
       'list-tabs',
       'ping',
       'screenshot',

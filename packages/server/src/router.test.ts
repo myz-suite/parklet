@@ -7,7 +7,7 @@ import type { ServerConfig } from './config.js';
 import { loadConfig } from './config.js';
 import { Ledger } from './ledger.js';
 import { Router, type RouterDeps, type RouterHub } from './router.js';
-import { SessionRegistry } from './session.js';
+import { TargetState } from './target.js';
 
 class FakeHub implements RouterHub {
   online = true;
@@ -31,7 +31,6 @@ class FakeHub implements RouterHub {
     return {
       id: req.id,
       result: {
-        sessionId: req.sessionId,
         tabId: req.tabId,
         context: { url: 'https://example.com', title: 'Example', navId: 1, tabId: req.tabId ?? 1 },
         data: {},
@@ -42,7 +41,7 @@ class FakeHub implements RouterHub {
 
 interface TestContext {
   config: ServerConfig;
-  registry: SessionRegistry;
+  target: TargetState;
   ledger: Ledger;
   hub: FakeHub;
   router: Router;
@@ -54,11 +53,11 @@ let ctx: TestContext;
 beforeEach(() => {
   const dir = mkdtempSync(join(tmpdir(), 'pl-router-'));
   const config = loadConfig({ PARKINGLOT_STATE_DIR: dir });
-  const registry = new SessionRegistry(dir);
+  const target = new TargetState();
   const ledger = new Ledger(dir);
   const hub = new FakeHub();
-  const router = new Router({ config, registry, hub, ledger } satisfies RouterDeps);
-  ctx = { config, registry, ledger, hub, router, dir };
+  const router = new Router({ config, hub, ledger, target } satisfies RouterDeps);
+  ctx = { config, target, ledger, hub, router, dir };
 });
 
 afterEach(() => {
@@ -82,7 +81,7 @@ describe('Router — validation', () => {
     const disabled = await ctx.router.handle({
       id: '1',
       method: 'eval',
-      params: { expression: '1' },
+      params: { script: '1' },
     });
     expect('error' in disabled && disabled.error.code).toBe('EVAL_DISABLED');
     const unknown = await ctx.router.handle({ id: '1', method: 'fly' });
@@ -102,39 +101,39 @@ describe('Router — validation', () => {
   });
 });
 
-describe('Router — targeting and session', () => {
-  it('creates a session automatically on first goto and returns context', async () => {
+describe('Router — targeting', () => {
+  it('goto returns context and sets the current target tab', async () => {
     const res = await ctx.router.handle(valid);
     expect('result' in res).toBe(true);
     if ('result' in res) {
-      expect(res.result.sessionId).toMatch(/^pl-/);
-      expect(res.result.tabId).toBeDefined();
+      expect(res.result.tabId).toBe(42);
       expect(res.result.context?.navId).toBe(1);
     }
-    expect(ctx.registry.list()).toHaveLength(1);
+    expect(ctx.target.get()).toBe(42);
   });
 
-  it('reuses the default session for subsequent commands', async () => {
+  it('reuses the current target tab for subsequent commands', async () => {
     await ctx.router.handle(valid);
-    const sessionId = ctx.registry.getDefault()!.id;
-    const res = await ctx.router.handle({ id: '2', method: 'extract', params: {} });
-    expect('result' in res && res.result.sessionId).toBe(sessionId);
-    expect(ctx.hub.received[1]?.sessionId).toBe(sessionId);
+    await ctx.router.handle({ id: '2', method: 'extract', params: {} });
+    expect(ctx.hub.received[1]?.tabId).toBe(42);
   });
 
-  it('errors with SESSION_NOT_FOUND for unknown sessionId', async () => {
-    const res = await ctx.router.handle({
-      id: '1',
-      method: 'click',
-      params: { selector: '#a' },
-      sessionId: 'pl-missing',
-    });
-    expect('error' in res && res.error.code).toBe('SESSION_NOT_FOUND');
+  it('prefers an explicit tabId over the current target', async () => {
+    await ctx.router.handle(valid); // current = 42
+    await ctx.router.handle({ id: '2', method: 'extract', params: {}, tabId: 99 });
+    expect(ctx.hub.received[1]?.tabId).toBe(99);
+    expect(ctx.target.get()).toBe(99);
   });
 
-  it('targets the latest active tab when no session exists', async () => {
+  it('falls back to the latest active tab when there is no current target', async () => {
     const res = await ctx.router.handle({ id: '1', method: 'extract', params: {} });
     expect('result' in res && res.result.tabId).toBe(42);
+  });
+
+  it('errors with EXTENSION_NO_TAB when there is no target at all', async () => {
+    ctx.hub.latestTabId = undefined;
+    const res = await ctx.router.handle({ id: '1', method: 'extract', params: {} });
+    expect('error' in res && res.error.code).toBe('EXTENSION_NO_TAB');
   });
 
   it('reports EXTENSION_OFFLINE when the extension is not connected', async () => {
@@ -144,6 +143,7 @@ describe('Router — targeting and session', () => {
   });
 
   it('serves ping and get-status locally even when the extension is offline', async () => {
+    ctx.target.set(7);
     ctx.hub.online = false;
     const ping = await ctx.router.handle({ id: '1', method: 'ping', params: {} });
     expect('result' in ping).toBe(true);
@@ -153,30 +153,31 @@ describe('Router — targeting and session', () => {
     }
     const status = await ctx.router.handle({ id: '2', method: 'get-status', params: {} });
     expect('result' in status).toBe(true);
+    if ('result' in status) {
+      expect((status.result.data as { currentTabId?: number }).currentTabId).toBe(7);
+    }
   });
 });
 
 describe('Router — response normalization and ledger', () => {
-  it('records ok entries and touches the session', async () => {
+  it('records ok entries with the resolved tabId', async () => {
     await ctx.router.handle(valid);
-    const id = ctx.registry.getDefault()!.id;
     await ctx.router.handle({ id: '2', method: 'extract', params: {} });
     const entries = ctx.ledger.readTail(10);
     expect(entries.map((e) => e.outcome)).toEqual(['ok', 'ok']);
-    expect(ctx.registry.get(id)?.context?.navId).toBe(1);
+    expect(entries[1]?.tabId).toBe(42);
   });
 
-  it('unbinds the session tab when the extension reports SESSION_TAB_CLOSED', async () => {
+  it('clears the current target when the extension reports TAB_CLOSED', async () => {
     await ctx.router.handle(valid);
-    const id = ctx.registry.getDefault()!.id;
-    expect(ctx.registry.get(id)?.tabId).toBeDefined();
+    expect(ctx.target.get()).toBe(42);
     ctx.hub.responder = (req) => ({
       id: req.id,
-      error: { code: 'SESSION_TAB_CLOSED', message: 'No tab with id: 42' },
+      error: { code: 'TAB_CLOSED', message: 'No tab with id: 42' },
     });
     const res = await ctx.router.handle({ id: '2', method: 'extract', params: {} });
-    expect('error' in res && res.error.code).toBe('SESSION_TAB_CLOSED');
-    expect(ctx.registry.get(id)?.tabId).toBeUndefined();
+    expect('error' in res && res.error.code).toBe('TAB_CLOSED');
+    expect(ctx.target.get()).toBeUndefined();
   });
 
   it('propagates extension errors verbatim with the request id', async () => {

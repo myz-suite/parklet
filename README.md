@@ -52,11 +52,13 @@ plt status        # extension: connected ✅
 ## Quick start
 
 ```bash
-plt goto https://example.com    # navigate (auto-creates a session)
+plt goto https://example.com    # navigate (sets the current tab)
 plt extract                     # readable page text
 plt click-text "More information"
 plt screenshot                  # saves ./screenshot-<timestamp>.png and prints the path
 plt search "parkinglot"         # web search
+plt links                       # visible links grouped by href
+plt forms                       # visible form fields grouped by form
 ```
 
 ## Agent skill

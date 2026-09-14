@@ -26,3 +26,6 @@ playwright-report/
 *.zip
 
 .plt-state/
+
+# Local export artifacts (e.g. kimi export)
+exports/

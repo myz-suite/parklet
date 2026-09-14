@@ -12,11 +12,11 @@ Authoritative design: `docs/initial-plan.md` (protocol, command set, session/tab
 
 ## Repository (pnpm workspace)
 
-| Path                 | Package                 | Role                                                                        |
-| -------------------- | ----------------------- | --------------------------------------------------------------------------- |
-| `packages/protocol`  | `@parkinglot/protocol`  | Message envelope, command set, common types, Zod validation                 |
-| `packages/server`    | `@parkinglot/server`    | Relay daemon: WS server, CLI, session registry, event cache, command ledger |
-| `packages/extension` | `@parkinglot/extension` | Chrome MV3: WS client, content-script executor, popup console               |
+| Path                 | Package                 | Role                                                                           |
+| -------------------- | ----------------------- | ------------------------------------------------------------------------------ |
+| `packages/protocol`  | `@parkinglot/protocol`  | Message envelope, command set, common types, Zod validation                    |
+| `packages/server`    | `@parkinglot/server`    | Relay daemon: WS server, CLI, current-tab routing, event cache, command ledger |
+| `packages/extension` | `@parkinglot/extension` | Chrome MV3: WS client, content-script executor, popup console                  |
 
 Project skills (already installed): `.agents/skills/` — bootstrapping, probing, challenge, review, agent-facing-doc, etc.
 
@@ -49,7 +49,7 @@ pnpm format         # prettier --write .
 
 ## Current status
 
-All 5 phases of `docs/initial-plan.md` are complete, plus the v2 increment (`docs/v2-incremental-plan.md`): HITL removed, extract gained selector/structured/article (defuddle), fill/type input resolution, press combos, element screenshots, tab-close session fallback, and a tab-lifecycle event cache (`plt events`). Everything is green (typecheck/test/build/lint/format; 143 unit tests + 21 E2E). A MAIN-world content script (`content-main.js`) backfills legacy keyboard `keyCode` for `press`. `extract --article` uses the `defuddle/full` bundle for Markdown output; esbuild `minify` is on (`content.js` ≈755 KB, `background.js` ≈8 KB). The popup shows a connection-status badge (green/red/orange) driven by `status.ts`, and `plt serve` shuts down gracefully on Ctrl+C (`close(1001)` + `closeAllConnections()`).
+All 5 phases of `docs/initial-plan.md` are complete, plus the v2 increment (`docs/v2-incremental-plan.md`) and the v3 increment (`docs/v3-incremental-plan.md`): HITL removed, extract gained selector/structured/article (defuddle), fill/type input resolution, press combos, element screenshots, current-tab close fallback, and a tab-lifecycle event cache (`plt events`); v3 adds an upgraded `eval` (full script run in the page **MAIN world**, JSON-serializable result, `NOT_SERIALIZABLE` — isolated-world eval is impossible under the MV3 CSP), Google search snippets, `plt selection`, and `plt links` / `plt forms` (visible-only by default, grouped, paged). The **session concept was removed** (it leaked a session per `goto`): commands now target an explicit `--tab` or the server's single **current tab** (auto-cleared when its tab closes, falling back to the most recently active tab). Package versions are `0.3.0`. Everything is green (typecheck/test/build/lint/format). A MAIN-world content script (`content-main.js`) backfills legacy keyboard `keyCode` for `press`. `extract --article` uses the `defuddle/full` bundle for Markdown output; esbuild `minify` is on (`content.js` ≈760 KB, `background.js` ≈11 KB). `eval` is enabled only with `PARKINGLOT_ENABLE_EVAL=1` (an explicit `eval` entry in `PARKINGLOT_DISABLED_COMMANDS` wins). The popup shows a connection-status badge (green/red/orange) driven by `status.ts`, and `plt serve` shuts down gracefully on Ctrl+C (`close(1001)` + `closeAllConnections()`). The v4 increment (`docs/v4-incremental-plan.md`) adds tool-UX improvements: `extract --exclude <css>`, `scroll --selector` now scrolls inside an element (plus `scroll-to`), the `dom-query` exploration command, and `plt run` batch execution (`docs/v4-incremental-plan.md`).
 
 To run the system end-to-end: `npm install -g @parkinglot/server` → `plt serve` → install the extension from the Chrome Web Store and pair it in the popup → use `plt <command>` (see `parkinglot` skill; protocol reference: `skills/parkinglot/references/protocol.md`). Agent side: `npx skills add myz-suite/parkinglot --skill parkinglot`. From source: `pnpm install && pnpm build` → `pnpm --filter @parkinglot/server start` + load `packages/extension/dist` unpacked.
 
