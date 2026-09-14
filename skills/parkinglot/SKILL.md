@@ -1,6 +1,6 @@
 ---
 name: parkinglot
-description: 'Control a real Chrome browser through ParkingLot (parkinglot-server + parkinglot-extension). Use whenever a task needs browser automation: opening pages, clicking, typing, scrolling, extracting readable content, taking screenshots, searching the web, or making page-context network requests (with login state). Triggers: "open a website", "click X", "fill the form", "extract page content", "take a screenshot", "search the web", "fetch a URL with cookies".'
+description: 'Control a real Chrome browser through ParkingLot (parkinglot-server + parkinglot-extension). Use whenever a task needs browser automation: opening pages, clicking, typing, scrolling, extracting readable content, taking screenshots, searching the web, or making page-context network requests (with login state).'
 ---
 
 # ParkingLot
@@ -17,21 +17,28 @@ Agent ── plt <command> ──▶ parkinglot-server (ws://127.0.0.1:8787) ─
 2. Install the extension from the Chrome Web Store (<https://chromewebstore.google.com/detail/ajpkphgdonekdpifjhfffffjhikiafdj>), open its popup, enter the server URL and token, **Save & Connect** — wait for green **Connected ✓**.
 3. Verify: `plt status` → `extension: connected ✅`.
 
-Dev/from source: `pnpm install && pnpm build` → `pnpm --filter @parkinglot/server start`, and load `packages/extension/dist` unpacked (chrome://extensions → Developer mode → Load unpacked).
+Config via env (defaults safe): `PARKINGLOT_PORT=8787`, `PARKINGLOT_BIND=127.0.0.1`, `PARKINGLOT_TOKEN`, `PARKINGLOT_ALLOWED_HOSTS` (comma list), `PARKINGLOT_DISABLED_COMMANDS` (defaults to `eval`).
 
-Config via env (defaults safe): `PARKINGLOT_PORT=8787`, `PARKINGLOT_BIND=127.0.0.1`, `PARKINGLOT_TOKEN`, `PARKINGLOT_ALLOWED_HOSTS` (comma list), `PARKINGLOT_ENABLE_EVAL=1` (off by default).
+The extension's toolbar icon shows a status badge — **green** = connected, **red** = disconnected (server not running / dropped), **orange** = not configured or bad token. The popup shows guidance and a **Retry** button; a wrong token stops auto-reconnect until you fix the config.
 
-## 2. Commands (full reference: `references/protocol.md`)
+## 2. Commands (full reference: `references/protocol.md`; worked examples: `references/example.md`)
 
 Navigation/state: `plt status`, `plt ping`, `plt goto <url>`, `plt back`, `plt forward`, `plt reload`
 Interact: `plt click <css>`, `plt click-text <text>`, `plt fill <css> <value>`, `plt type <css> <text>`, `plt press <key|combo>` (e.g. `Control+c`), `plt hover <css>`, `plt select <css> --value <v>`
-View: `plt scroll <up|down|top|bottom|amount>`, `plt screenshot --path out.png [--selector <css>]`
+View: `plt scroll <up|down|top|bottom|amount>`, `plt screenshot [--path out.png] [--selector <css>] [--format png|jpeg]`
 Extract: `plt extract [--selector <css>] [--mode text|structured] [--article] [--depth N] [--offset N] [--limit N] [--max-chars N] [--visible-only] [--prettify]`, `plt page-info`, `plt tabs`, `plt tab <id>`, `plt tab-new <url>`, `plt tab-close`
 Network in page: `plt fetch <url> [--method POST] [--header "k: v"] [--body ...]`, `plt search <query> [--engine google|duckduckgo] [--page N]` (default engine google; paging via --page)
 Wait/session: `plt wait [--ms N | --selector css | --condition load]`, `plt session list|new|use|close`
 Ops: `plt logs [--follow]`, `plt events [--tail N]` (tab lifecycle events; clears the unread count)
 
 Global flags: `--server <url>`, `--json`, `--timeout <ms>`, `--session <id>`.
+
+Notes:
+
+- `plt screenshot` without `--path` writes `screenshot-<timestamp>.<png|jpeg>` in the cwd and prints the absolute path.
+- `plt extract --article` returns **Markdown** with YAML frontmatter (`title`/`site`/`url`/…); `--selector` becomes the article content selector.
+- `plt extract --mode structured --selector …` returns a DOM tree with `total` + echoed `offset`/`limit` — page with `offset += limit` until `offset + nodes.length >= total`.
+- `plt press` supports Playwright-style keys/combos (`Control+c`, `Meta+s`, `ArrowDown`, `Enter`, …).
 
 ## 3. Continuity model (IMPORTANT)
 
@@ -57,5 +64,5 @@ Authenticated API: `plt fetch https://api.example.com/me --header "Accept: appli
 ## 6. Security notes
 
 - Server binds 127.0.0.1 only; the extension connection requires the pair token. Treat the token as a secret.
-- `eval` is disabled by default; enable only via `PARKINGLOT_ENABLE_EVAL=1` on the server and use with care.
+- `eval` is disabled by default (it is listed in `PARKINGLOT_DISABLED_COMMANDS`); enable deliberately and use with care.
 - The extension needs `host_permissions <all_urls>` — that is the inherent cost of controlling any page. The command ledger (`plt logs`) redacts credentials.

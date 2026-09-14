@@ -1,8 +1,7 @@
-# ParkingLot Protocol Reference (v0.1.0)
+# ParkingLot Protocol Reference (v0.1.0-draft)
 
-> Authoritative command reference for the `parkinglot` skill and both ends of the implementation.
-> Location: `skills/parkinglot/references/protocol.md` (`docs/protocol.md` is a symlink to this file). A Chinese version is available at `protocol.zh.md`.
-> Implementation: `packages/protocol` (`@parkinglot/protocol`; paths in this document are relative to the repository root).
+> Authoritative command reference for the `parkinglot` skill, describing the wire protocol between the agent-facing CLI/HTTP and the browser extension.
+> Worked examples: [`example.md`](./example.md).
 
 The protocol follows the CDP/Playwright mental model: JSON-RPC-style envelopes (`id/method/params` → `id/result|error`) with flat kebab-case command names (one-to-one with CLI subcommands).
 
@@ -34,10 +33,13 @@ The three common `result` fields carry addressing and continuity information; `d
     "sessionId": "pl-01HK…",
     "tabId": 7,
     "context": { "url": "https://example.com", "title": "Example", "navId": 2, "tabId": 7 },
-    "data": {}
+    "data": {},
+    "unreadCount": 0
   }
 }
 ```
+
+> `unreadCount` (optional) is attached by the server's **HTTP** `/api/command` response only, counting cached `tab.created`/`tab.removed` events since the last `plt events` / `GET /api/events`. The CLI prints `N new events, run \`plt events\`` when non-zero. The WS responses to the extension do not carry it.
 
 ### Response (failure)
 
@@ -99,7 +101,7 @@ Write-access markers are advisory (audit/logging): `always` = write operation; `
 | `hover`      | `selector`                                                                                                      | `{ element }`              | always |
 | `select`     | `selector`, `value?`/`label?` (at least one)                                                                    | `{ element }`              | always |
 
-> `press` accepts a Playwright-style key or combo (`Enter`, `ArrowDown`, `Control+c`, `Meta+s`, `Shift+Tab`, `Backspace`, …). It dispatches the full `keydown`/`keypress`/`keyup` sequence with `key`/`code`/`keyCode`/`which`/`charCode`, and emulates common default actions (printable insert, Backspace/Delete, Ctrl/Cmd+A select-all, Enter form submit, input caret moves). A MAIN-world content script backfills legacy key codes so pages that read `keyCode` (e.g. Google suggestions) react. Single characters and named keys are supported; an unknown multi-character key returns `INVALID_PARAMS`. These are synthetic (untrusted) events — behavior can differ from real keystrokes for IME / rich editors.
+> `press` accepts a Playwright-style key or combo (`Enter`, `ArrowDown`, `Control+c`, `Meta+s`, `Shift+Tab`, `Backspace`, …). It dispatches the full `keydown`/`keypress`/`keyup` sequence with `key`/`code`/`keyCode`/`which`/`charCode`, and emulates common default actions (printable insert, Backspace/Delete, Ctrl/Cmd+A select-all, Enter form submit, input caret moves). Legacy key codes are backfilled so pages that read `keyCode` (e.g. Google suggestions) react. Single characters and named keys are supported; an unknown multi-character key returns `INVALID_PARAMS`. These are synthetic (untrusted) events — behavior can differ from real keystrokes for IME / rich editors.
 
 ### Scroll / View
 
@@ -150,7 +152,7 @@ type ExtractResult =
 
 For selector-based results, `total` is the number of first-level elements (after `visibleOnly`, before paging), so an agent can iterate with `offset`/`limit` until `offset + nodes.length >= total`. `offset`/`limit` are echoed when provided.
 
-`article` uses the `defuddle/full` bundle and returns `content` as **Markdown** (the core `defuddle` bundle silently ignores `markdown: true`). Metadata is returned as separate fields; the CLI prints it as YAML frontmatter.
+`article` returns `content` as **Markdown**; an optional `selector` restricts extraction to that element. Metadata is returned as separate fields and the CLI prints it as YAML frontmatter.
 
 ### In-page Network (executed in the real page context, with login state)
 
@@ -221,9 +223,9 @@ For selector-based results, `total` is the number of first-level elements (after
 
 ## Validation (Postel's Law)
 
-- **Be conservative in what you send**: schemas are exact per-command (`packages/protocol/src/schemas.ts`).
-- **Be liberal in what you accept**: unknown fields are stripped; optional fields default; `validateParams(method, params)` returns normalized params.
-- Both ends (server Router and extension) must use the same schemas.
+- **Be conservative in what you send**: params are validated per command against an exact schema.
+- **Be liberal in what you accept**: unknown fields are stripped; optional fields default.
+- Both ends (server and extension) validate with the same schemas.
 
 ## Common Types
 

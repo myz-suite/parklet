@@ -1,7 +1,7 @@
 {
   "name": "@parkinglot/server",
-  "version": "0.1.1",
-  "description": "ParkingLot relay daemon: WebSocket server for the extension, CLI + HTTP for the agent, session registry, event cache, command ledger.",
+  "version": "0.2.0",
+  "description": "ParkingLot: Drive a real browser owned by the human user. Relay daemon: WebSocket server, CLI + HTTP for agents, session registry, event cache, command ledger.",
   "license": "MIT",
   "keywords": [
     "parkinglot",
@@ -37,7 +37,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"require('fs').chmodSync('dist/cli.js', 0o755)\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "start": "node dist/index.js"

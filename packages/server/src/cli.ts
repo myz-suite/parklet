@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
 import {
@@ -10,6 +11,13 @@ import {
   type Response,
 } from '@parkinglot/protocol';
 import { startServer } from './index.js';
+
+/** CLI 版本 = 本包 package.json 的 version（与线协议 PROTOCOL_VERSION 不同概念）。 */
+const CLI_PACKAGE_VERSION = (
+  createRequire(import.meta.url)('../package.json') as {
+    version: string;
+  }
+).version;
 
 interface GlobalOpts {
   server: string;
@@ -408,12 +416,27 @@ async function run(
 export function buildProgram(): Command {
   const program = new Command()
     .name('plt')
-    .description('ParkingLot CLI — control the browser through parkinglot-server')
-    .version(PROTOCOL_VERSION)
+    .description('ParkingLot: drive a real browser owned by the human user')
+    .version(`${CLI_PACKAGE_VERSION} (protocol ${PROTOCOL_VERSION})`)
     .option('--server <url>', 'server base URL', 'http://127.0.0.1:8787')
     .option('--json', 'output structured JSON (envelope)')
     .option('--timeout <ms>', 'command timeout in milliseconds', '30000')
-    .option('--session <id>', 'session id to target (defaults to the server default session)');
+    .option('--session <id>', 'session id to target (defaults to the server default session)')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  plt goto https://example.com     navigate (auto-creates a session)
+  plt extract --article            article body as Markdown
+  plt extract --mode structured --selector "article ul" --limit 10
+  plt screenshot                   save screenshot-<timestamp>.png in the cwd
+  plt press Control+c              Playwright-style key combo
+
+Exit codes:
+  0 success · 2 invalid params · 3 target/session error · 4 extension offline · 6 timeout · 1 other
+
+Run \`plt <command> --help\` for command-specific options.`,
+    );
 
   // 会话 / 状态
   register(
@@ -448,7 +471,7 @@ export function buildProgram(): Command {
     'click',
     'click an element by CSS selector',
     (_opts, args) => ({ selector: args[0] }),
-    (c) => c.argument('<selector>'),
+    (c) => c.argument('<selector>', 'CSS selector'),
   );
   register(
     program,
@@ -456,7 +479,7 @@ export function buildProgram(): Command {
     'click-text',
     'click an element by visible text',
     (_opts, args) => ({ text: args[0] }),
-    (c) => c.argument('<text>'),
+    (c) => c.argument('<text>', 'visible text (fuzzy match, must be unique)'),
   );
   register(
     program,
@@ -464,7 +487,10 @@ export function buildProgram(): Command {
     'fill',
     'fill an input (replace its value)',
     (_opts, args) => ({ selector: args[0], value: args[1] }),
-    (c) => c.argument('<selector>').argument('<value>'),
+    (c) =>
+      c
+        .argument('<selector>', 'CSS selector, or a label/container holding the input')
+        .argument('<value>', 'value to set'),
   );
   register(
     program,
@@ -472,7 +498,10 @@ export function buildProgram(): Command {
     'type',
     'type text into an input (per keystroke)',
     (_opts, args) => ({ selector: args[0], text: args[1] }),
-    (c) => c.argument('<selector>').argument('<text>'),
+    (c) =>
+      c
+        .argument('<selector>', 'CSS selector, or a label/container holding the input')
+        .argument('<text>', 'text to type'),
   );
   register(
     program,
@@ -480,7 +509,10 @@ export function buildProgram(): Command {
     'press',
     'press a key or combo (e.g. Enter, Control+c, Meta+s, Shift+Tab)',
     (opts, args) => ({ selector: opts.selector, key: args[0] }),
-    (c) => c.argument('<key>').option('--selector <css>', 'optional target element'),
+    (c) =>
+      c
+        .argument('<key>', 'key or combo; single char or named key')
+        .option('--selector <css>', 'optional target element (default: focused element)'),
   );
   register(
     program,
@@ -488,7 +520,7 @@ export function buildProgram(): Command {
     'hover',
     'hover an element',
     (_opts, args) => ({ selector: args[0] }),
-    (c) => c.argument('<selector>'),
+    (c) => c.argument('<selector>', 'CSS selector'),
   );
   register(
     program,
@@ -496,7 +528,11 @@ export function buildProgram(): Command {
     'select',
     'select a dropdown option (value or label)',
     (opts, args) => ({ selector: args[0], value: opts.value, label: opts.label }),
-    (c) => c.argument('<selector>').option('--value <v>').option('--label <l>'),
+    (c) =>
+      c
+        .argument('<selector>', 'CSS selector for the <select>')
+        .option('--value <v>', 'option value')
+        .option('--label <l>', 'option label (substring match)'),
   );
 
   // 滚动 / 视图
@@ -598,10 +634,14 @@ export function buildProgram(): Command {
     },
     (c) =>
       c
-        .argument('<url>')
+        .argument('<url>', 'URL to request from the page context')
         .option('--method <m>', 'HTTP method', 'GET')
-        .option('--header <k:v>', 'repeatable header', collect, [])
-        .option('--body <data>')
+        .option(
+          '--header <k:v>',
+          'repeatable header (e.g. --header "Accept: application/json")',
+          collect,
+        )
+        .option('--body <data>', 'request body')
         .option('--type <t>', 'text|json|binary', 'text'),
   );
   register(
@@ -616,7 +656,7 @@ export function buildProgram(): Command {
     }),
     (c) =>
       c
-        .argument('<query>')
+        .argument('<query>', 'search query')
         .option('--engine <e>', 'search engine (google|duckduckgo; default google)')
         .option('--page <n>', 'result page (1-based; google=10/page, duckduckgo=30/page)', '1'),
   );
@@ -629,7 +669,7 @@ export function buildProgram(): Command {
     'activate-tab',
     'activate a tab',
     (_opts, args) => ({ tabId: Number(args[0]) }),
-    (c) => c.argument('<tabId>'),
+    (c) => c.argument('<tabId>', 'tab id to activate (see `plt tabs`)'),
   );
   register(
     program,
@@ -637,7 +677,7 @@ export function buildProgram(): Command {
     'create-tab',
     'open a new tab',
     (_opts, args) => ({ url: args[0] }),
-    (c) => c.argument('<url>'),
+    (c) => c.argument('<url>', 'URL to open'),
   );
   register(
     program,
@@ -645,7 +685,7 @@ export function buildProgram(): Command {
     'close-tab',
     'close a tab (default: current)',
     (_opts, args) => ({ tabId: args[0] !== undefined ? Number(args[0]) : undefined }),
-    (c) => c.argument('[tabId]'),
+    (c) => c.argument('[tabId]', 'tab id (default: the targeted tab)'),
   );
 
   // 等待
@@ -803,6 +843,42 @@ export function buildProgram(): Command {
       }
       if (events.length === 0) console.log('(no events)');
     });
+
+  // 帮助分组（commander helpGroup）：让命令列表按用途归类，更易扫读
+  const GROUPS: Record<string, string> = {
+    goto: 'Navigation',
+    back: 'Navigation',
+    forward: 'Navigation',
+    reload: 'Navigation',
+    click: 'Interaction',
+    'click-text': 'Interaction',
+    fill: 'Interaction',
+    type: 'Interaction',
+    press: 'Interaction',
+    hover: 'Interaction',
+    select: 'Interaction',
+    scroll: 'View',
+    screenshot: 'View',
+    extract: 'Extraction',
+    'page-info': 'Extraction',
+    fetch: 'Network',
+    search: 'Network',
+    tabs: 'Tabs',
+    tab: 'Tabs',
+    'tab-new': 'Tabs',
+    'tab-close': 'Tabs',
+    wait: 'Wait',
+    status: 'Session',
+    ping: 'Session',
+    session: 'Session',
+    logs: 'Ops',
+    events: 'Ops',
+    serve: 'Server',
+  };
+  for (const cmd of program.commands) {
+    const group = GROUPS[cmd.name()];
+    if (group !== undefined) cmd.helpGroup(group);
+  }
 
   return program;
 }

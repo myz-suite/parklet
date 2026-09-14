@@ -305,3 +305,5 @@ pnpm typecheck && pnpm test && pnpm lint && pnpm format
 4. **事件缓存范围**：只缓存 `tab.created`/`tab.removed`（避免 `page.navigated` 每次导航都刷"未读"）；未读数附在 HTTP 命令响应的 `result.unreadCount`。
 5. **structured 单 root 语义**：`selector` 只匹配一个元素时，第一层列表取其子元素（按参数语义章节），故返回的是该元素子树的 `DomNode[]`。
 6. **E2E**：HITL 用例与 helpers 已删除；`pnpm test:e2e` 已跑通（9 passed，含截图像素断言与 SW 保活）。本期未新增 E2E 用例覆盖 extract/press/tab 回退等新特性（已有单测覆盖）。
+7. **后续文档调整（2026-09-14）**：移除 `skills/parkinglot/references/protocol.zh.md`（改为英文单版），并在 `references/` 下新增 `example.md` 作为参考示例；protocol.md/SKILL.md/README.md 同步更新。上文中"同步 protocol.zh.md"的条目已作废。
+8. **版本约定调整（2026-09-14）**：上文 §"约束"的"PROTOCOL_VERSION（0.1.0）不提升"作废——`PROTOCOL_VERSION` 与 npm 包版本解耦，改为 **`0.1.0-draft`** 表示线协议仍在设计中；各 package（protocol/server/extension）npm 版本统一为 **0.2.0**。`plt --version` 显示包版本 + 协议版本。
