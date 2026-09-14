@@ -53,6 +53,20 @@ h1 {
   background: var(--bad);
 }
 
+.dot.pending {
+  background: #f5c542;
+}
+
+.dot.warn {
+  background: #ff9500;
+}
+
+code {
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
 label {
   display: block;
   margin-bottom: 8px;
@@ -88,6 +102,24 @@ button:disabled {
   background: #2f6b46;
   cursor: default;
   filter: none;
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+}
+
+button.secondary {
+  background: #3a3d47;
+  width: auto;
+  flex: 0 0 auto;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+button.secondary:disabled {
+  background: #2a2c33;
+  color: var(--muted);
 }
 
 .hint {

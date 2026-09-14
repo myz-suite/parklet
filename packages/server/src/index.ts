@@ -59,7 +59,11 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
     config,
     close: async () => {
       await hub.close();
-      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      await new Promise<void>((resolve) => {
+        httpServer.close(() => resolve());
+        // 关闭残留的 keep-alive/空闲 HTTP 连接，避免 close 回调被挂起（Node 18.2+）
+        httpServer.closeAllConnections?.();
+      });
     },
   };
 }

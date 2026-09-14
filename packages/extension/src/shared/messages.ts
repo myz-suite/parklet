@@ -24,11 +24,25 @@ export interface ContentResult {
 export type PopupRequest =
   | { type: 'config:get' }
   | { type: 'config:set'; config: { serverUrl: string; token: string } }
-  | { type: 'state:get' };
+  | { type: 'state:get' }
+  | { type: 'state:retry' };
+
+export type PopupConnState =
+  'unconfigured' | 'connecting' | 'connected' | 'auth_failed' | 'disconnected';
 
 // SW → popup
 export type PopupResponse =
   | { type: 'config'; serverUrl: string; token: string; connected: boolean }
   | { type: 'config:ok' }
-  | { type: 'state'; connected: boolean; serverUrl: string; retryDelayMs: number }
+  | {
+      type: 'state';
+      state: PopupConnState;
+      label: string;
+      guidance: string;
+      connected: boolean;
+      serverUrl: string;
+      lastError?: string;
+      retryDelayMs: number;
+    }
+  | { type: 'state:ok' }
   | { type: 'error'; message: string };

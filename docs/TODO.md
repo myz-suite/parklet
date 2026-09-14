@@ -1,2 +1,8 @@
 - [x] V2 plan
 - [ ] Code Execution
+- [ ] Search result include summary
+- [ ] Text Selection
+- [ ] `links` / `form` show all actionable items
+  - Links show: Link text, target URL,
+  - Form element show: Field name, type (button / input / select / textarea / checkbox / radio / submit / reset), value? and (possible) labels
+    - Forms grouped by `form` action/target

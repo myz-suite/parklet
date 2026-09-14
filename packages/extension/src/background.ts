@@ -1,6 +1,7 @@
-import { isRequest, PROTOCOL_VERSION } from '@parkinglot/protocol/runtime';
+import { isEvent, isRequest, PROTOCOL_VERSION } from '@parkinglot/protocol/runtime';
 import type {
   ContextSnapshot,
+  EventMessage,
   ProtocolError,
   Request,
   Response,
@@ -14,6 +15,7 @@ import type {
 } from './shared/messages.js';
 import { buildSearchUrl } from './dom/searchUrl.js';
 import { computeCropRect, type ElementRectInfo } from './dom/screenshot.js';
+import { badgeFor, guidanceFor, statusLabel, type ConnState } from './status.js';
 
 /**
  * Background service worker：
@@ -32,13 +34,51 @@ import { computeCropRect, type ElementRectInfo } from './dom/screenshot.js';
 
 let ws: WebSocket | null = null;
 let retryDelayMs = 1000;
-let connected = false;
+let connState: ConnState = 'unconfigured';
+let lastError: string | undefined;
 let config: { serverUrl: string; token: string } | null = null;
 const navIds = new Map<number, number>();
 const pendingNavigations = new Map<number, Array<() => void>>();
 
 function code(code: ProtocolError['error']['code'], message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code });
+}
+
+// ---------------------------------------------------------------------------
+// 连接状态（badge + popup 引导；持久化到 storage.session 以跨 SW 重启）
+// ---------------------------------------------------------------------------
+
+function updateBadge(): void {
+  const badge = badgeFor(connState);
+  if (badge === null) return; // connecting：保持上一个 badge
+  void chrome.action.setBadgeText({ text: badge.text });
+  void chrome.action.setBadgeBackgroundColor({ color: badge.color });
+}
+
+function applyState(next: ConnState, error?: string): void {
+  connState = next;
+  lastError = error;
+  updateBadge();
+  void chrome.storage.session.set({ connState: next, lastError: error ?? null }).catch(() => {});
+}
+
+function statusPayload(): {
+  state: ConnState;
+  label: string;
+  guidance: string;
+  serverUrl: string;
+  lastError?: string;
+  retryDelayMs: number;
+} {
+  const serverUrl = config?.serverUrl ?? '';
+  return {
+    state: connState,
+    label: statusLabel(connState),
+    guidance: guidanceFor(connState, { serverUrl, lastError }),
+    serverUrl,
+    lastError,
+    retryDelayMs,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -68,49 +108,108 @@ function sendWire(obj: unknown): void {
   }
 }
 
+// 防止并发/重复建连：connect() 在 await getConfig 前后可能被 alarm/心跳/重连定时器
+// 同时触发，若不加锁会创建多条 WS，server 端“新连接替换旧连接”会把在途命令打断。
+let connecting = false;
+
 async function connect(): Promise<void> {
-  config = await getConfig();
-  if (!config.serverUrl) return; // 未配置：popup 提示
-  const url = normalizeWsUrl(config.serverUrl);
-  try {
-    ws = new WebSocket(url);
-  } catch {
-    scheduleReconnect();
+  if (connecting) return;
+  if (ws !== null && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
     return;
   }
-
-  ws.onopen = () => {
-    retryDelayMs = 1000;
-    connected = true;
-    sendWire({ type: 'hello', token: config?.token ?? '', extensionVersion: PROTOCOL_VERSION });
-  };
-
-  ws.onmessage = (ev) => {
-    let msg: unknown;
-    try {
-      msg = JSON.parse(String(ev.data));
-    } catch {
+  connecting = true;
+  try {
+    config = await getConfig();
+    if (config.serverUrl.length === 0 || config.token.length === 0) {
+      applyState('unconfigured');
       return;
     }
-    if (isRequest(msg)) {
-      void handleCommand(msg);
-    }
-  };
+    const url = normalizeWsUrl(config.serverUrl);
+    if (connState !== 'connected') applyState('connecting');
 
-  ws.onclose = () => {
-    ws = null;
-    connected = false;
-    scheduleReconnect();
-  };
-  ws.onerror = () => {
-    ws?.close();
-  };
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(url);
+    } catch (err) {
+      applyState('disconnected', String(err));
+      scheduleReconnect();
+      return;
+    }
+    ws = socket;
+
+    // 每个 handler 都校验 ws === socket：被替换的旧 socket 的事件不得影响当前连接
+    socket.onopen = () => {
+      if (ws !== socket) return;
+      retryDelayMs = 1000;
+      sendWire({ type: 'hello', token: config?.token ?? '', extensionVersion: PROTOCOL_VERSION });
+      // “已连接”以 server 的 extension.connected 事件为准（token 校验通过之后）
+    };
+
+    socket.onmessage = (ev) => {
+      if (ws !== socket) return;
+      let msg: unknown;
+      try {
+        msg = JSON.parse(String(ev.data));
+      } catch {
+        return;
+      }
+      if (isRequest(msg)) {
+        void handleCommand(msg);
+        return;
+      }
+      if (isEvent(msg)) handleServerEvent(msg);
+    };
+
+    socket.onclose = (event) => {
+      if (ws !== socket) return; // 旧连接被替换，忽略其 close
+      ws = null;
+      if (event.code === 4401 || event.code === 4400) {
+        // 配置无效（token 错 / hello 非法）：不自动重连，等用户修正配置
+        applyState('auth_failed', `handshake rejected (${event.code})`);
+        return;
+      }
+      applyState('disconnected', event.reason || `closed (${event.code})`);
+      scheduleReconnect();
+    };
+
+    socket.onerror = () => {
+      try {
+        socket.close();
+      } catch {
+        /* already closed */
+      }
+    };
+  } finally {
+    connecting = false;
+  }
+}
+
+function handleServerEvent(event: EventMessage): void {
+  if (event.event === 'extension.connected') applyState('connected');
 }
 
 function scheduleReconnect(): void {
+  if (connState === 'auth_failed') return;
   const delay = retryDelayMs;
   retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
   setTimeout(() => void connect(), delay);
+}
+
+/** 配置变更/手动重试：主动断开当前连接并用最新配置重连。 */
+function forceReconnect(): void {
+  const socket = ws;
+  ws = null;
+  if (socket !== null) {
+    // 旧 socket 的 onclose 因 ws !== socket 而提前返回，不会触发 scheduleReconnect
+    try {
+      socket.close();
+    } catch {
+      /* already closed */
+    }
+  }
+  retryDelayMs = 1000;
+  applyState('connecting');
+  void connect();
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +569,7 @@ try {
   chrome.alarms.create('parkinglot-keepalive', { periodInMinutes: 0.5 });
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name !== 'parkinglot-keepalive') return;
-    if (ws === null) void connect();
+    if (ws === null && connState !== 'auth_failed') void connect();
   });
 } catch (err) {
   console.error('[parkinglot] alarms unavailable:', err);
@@ -484,7 +583,7 @@ try {
   setInterval(() => {
     if (ws !== null && ws.readyState === WebSocket.OPEN) {
       sendWire({ type: 'heartbeat', ts: Date.now() });
-    } else if (ws === null) {
+    } else if (ws === null && connState !== 'auth_failed') {
       void connect();
     }
   }, HEARTBEAT_INTERVAL_MS);
@@ -500,7 +599,7 @@ try {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes.serverUrl !== undefined || changes.token !== undefined) {
-      void connect();
+      forceReconnect();
     }
   });
 } catch (err) {
@@ -525,7 +624,7 @@ chrome.runtime.onMessage.addListener(
             type: 'config',
             serverUrl: c.serverUrl,
             token: c.token,
-            connected,
+            connected: connState === 'connected',
           };
           sendResponse(res);
         })();
@@ -534,20 +633,26 @@ chrome.runtime.onMessage.addListener(
       case 'config:set': {
         void (async () => {
           await saveConfig(msg.config.serverUrl, msg.config.token);
-          await connect();
+          forceReconnect();
           sendResponse({ type: 'config:ok' } satisfies PopupResponse);
         })();
         return true;
       }
       case 'state:get': {
         void (async () => {
-          const c = await getConfig();
+          const payload = statusPayload();
           sendResponse({
             type: 'state',
-            connected,
-            serverUrl: c.serverUrl,
-            retryDelayMs,
+            ...payload,
+            connected: payload.state === 'connected',
           } satisfies PopupResponse);
+        })();
+        return true;
+      }
+      case 'state:retry': {
+        void (async () => {
+          forceReconnect();
+          sendResponse({ type: 'state:ok' } satisfies PopupResponse);
         })();
         return true;
       }
@@ -561,6 +666,22 @@ chrome.runtime.onMessage.addListener(
 // 启动
 // ---------------------------------------------------------------------------
 
-chrome.runtime.onStartup.addListener(() => void connect());
-chrome.runtime.onInstalled.addListener(() => void connect());
-void connect();
+/** SW 重启后恢复上次连接状态并重设 badge（内存状态会丢失）。 */
+async function restoreState(): Promise<void> {
+  try {
+    const stored = await chrome.storage.session.get(['connState', 'lastError']);
+    if (typeof stored.connState === 'string') connState = stored.connState as ConnState;
+    lastError = typeof stored.lastError === 'string' ? stored.lastError : undefined;
+  } catch {
+    /* storage.session 不可用则保持默认 */
+  }
+  updateBadge();
+}
+
+chrome.runtime.onStartup.addListener(() => {
+  void restoreState().then(() => connect());
+});
+chrome.runtime.onInstalled.addListener(() => {
+  void restoreState().then(() => connect());
+});
+void restoreState().then(() => connect());

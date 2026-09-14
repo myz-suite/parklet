@@ -1,5 +1,13 @@
-import { rmSync } from 'node:fs';
-import { expect, test as base, type BrowserContext, type Page } from '@playwright/test';
+import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  expect,
+  test as base,
+  type BrowserContext,
+  type Page,
+  type Worker,
+} from '@playwright/test';
 import {
   command,
   launchExtensionContext,
@@ -7,12 +15,15 @@ import {
   startServer,
   startTestWeb,
   waitForExtensionOnline,
+  type RunningServer,
 } from './support';
 
 export interface Session {
   serverUrl: string;
   page: Page;
   context: BrowserContext;
+  sw: Worker;
+  server: RunningServer;
   /** 扩展视角的目标 chrome tabId（create-tab 返回，命令显式携带） */
   tabId: number;
 }
@@ -25,7 +36,7 @@ export const test = base.extend<{ session: Session }>({
       const server = await startServer();
       let session: Session;
       try {
-        const { context, profileDir } = await launchExtensionContext(server.url, server.token);
+        const { context, sw, profileDir } = await launchExtensionContext(server.url, server.token);
         try {
           const prevPages = context.pages().length;
           const created = (await command(server.url, 'create-tab', {
@@ -39,7 +50,7 @@ export const test = base.extend<{ session: Session }>({
               ? context.pages()[context.pages().length - 1]!
               : await context.waitForEvent('page', { timeout: 10_000 });
           await page.waitForLoadState('domcontentloaded');
-          session = { serverUrl: server.url, page, context, tabId };
+          session = { serverUrl: server.url, page, context, sw, server, tabId };
         } finally {
           // 若 fixture 内初始化失败也要关浏览器
           if (!session) await context.close().catch(() => {});
@@ -172,6 +183,84 @@ test('重连：强制终止 SW 后自动重连（alarms 兜底）', async ({ ses
   expect(res.data).toBeDefined();
 });
 
+async function connStateOf(sw: Worker): Promise<string | undefined> {
+  return sw.evaluate(async () => {
+    const s = await chrome.storage.session.get('connState');
+    return typeof s.connState === 'string' ? s.connState : undefined;
+  });
+}
+
+async function badgeOf(sw: Worker): Promise<{ text: string; color: string }> {
+  return sw.evaluate(async () => {
+    const text = await chrome.action.getBadgeText({});
+    const color = await chrome.action.getBadgeBackgroundColor({});
+    const hex = Array.isArray(color)
+      ? `#${color
+          .slice(0, 3)
+          .map((n) => n.toString(16).padStart(2, '0'))
+          .join('')}`
+      : String(color);
+    return { text, color: hex };
+  });
+}
+
+test('badge：连接成功显示绿色圆点', async ({ session }) => {
+  await expect.poll(async () => connStateOf(session.sw), { timeout: 10_000 }).toBe('connected');
+  expect(await badgeOf(session.sw)).toEqual({ text: '●', color: '#2ecc40' });
+});
+
+test('badge：token 错误显示橙色（auth_failed，不自动重连）', async ({ session }) => {
+  await session.sw.evaluate(async () => {
+    await chrome.storage.local.set({ token: 'wrong-token' });
+  });
+  await expect.poll(async () => connStateOf(session.sw), { timeout: 15_000 }).toBe('auth_failed');
+  expect(await badgeOf(session.sw)).toEqual({ text: '●', color: '#ff9500' });
+});
+
+test('badge：server 停止后显示红色（disconnected）', async ({ session }) => {
+  session.server.stop();
+  await expect.poll(async () => connStateOf(session.sw), { timeout: 20_000 }).toBe('disconnected');
+  expect(await badgeOf(session.sw)).toEqual({ text: '●', color: '#ff3b30' });
+});
+
+test('badge：未配置显示橙色（unconfigured）', async () => {
+  test.setTimeout(60_000);
+  const server = await startServer();
+  const { context, sw, profileDir } = await launchExtensionContext(server.url, server.token, {
+    autopair: false,
+  });
+  try {
+    await expect.poll(async () => connStateOf(sw), { timeout: 15_000 }).toBe('unconfigured');
+    expect(await badgeOf(sw)).toEqual({ text: '●', color: '#ff9500' });
+  } finally {
+    await context.close().catch(() => {});
+    rmSync(profileDir, { recursive: true, force: true });
+    server.stop();
+  }
+});
+
+test('连接稳定：短时间内多次配置变更后仍恢复并可用', async ({ session }) => {
+  const token = session.server.token;
+  // 突发多次配置变更（每次都触发重连）；回归：重复建连导致 server 替换连接、丢弃在途命令
+  for (let i = 0; i < 6; i++) {
+    const url = i % 2 === 0 ? session.serverUrl : `${session.serverUrl}/`;
+    await session.sw.evaluate(
+      async ({ url: u, token: t }) => {
+        await chrome.storage.local.set({ serverUrl: u, token: t });
+      },
+      { url, token },
+    );
+  }
+  await expect.poll(async () => connStateOf(session.sw), { timeout: 15_000 }).toBe('connected');
+  const res = await fetch(`${session.serverUrl}/api/command`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ method: 'extract', params: {}, tabId: session.tabId }),
+  });
+  const env = (await res.json()) as { error?: unknown };
+  expect(env.error, `command failed: ${JSON.stringify(env.error)}`).toBeUndefined();
+});
+
 test('extract --article 不再误报 INVALID_PARAMS', async ({ session }) => {
   const web = await startTestWeb();
   try {
@@ -287,6 +376,47 @@ test('press Enter：普通表单（input + submit）提交', async ({ session })
     expect(await session.page.textContent('#greeting')).toBe('hello bob');
   } finally {
     web.stop();
+  }
+});
+
+test('type：泛化 selector（input / 容器）也能解析并输入', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/form` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/form`, { timeout: 20_000 });
+    // 直接命中 input
+    await command(
+      session.serverUrl,
+      'type',
+      { selector: 'input', text: 'hi' },
+      { tabId: session.tabId },
+    );
+    expect(await session.page.$eval('#name', (el) => (el as HTMLInputElement).value)).toBe('hi');
+    // 命中容器（form），自动解析到其中 input
+    await command(
+      session.serverUrl,
+      'fill',
+      { selector: 'form', value: 'bye' },
+      { tabId: session.tabId },
+    );
+    expect(await session.page.$eval('#name', (el) => (el as HTMLInputElement).value)).toBe('bye');
+  } finally {
+    web.stop();
+  }
+});
+
+test('screenshot CLI：未指定 --path 时默认落盘并打印路径', async ({ session }) => {
+  const dir = mkdtempSync(join(tmpdir(), 'plt-shot-'));
+  try {
+    const res = await runCli(session.serverUrl, ['screenshot'], { cwd: dir });
+    expect(res.code).toBe(0);
+    const match = /saved to (.+\.png)/.exec(res.stdout);
+    expect(match).not.toBeNull();
+    const file = match![1]!;
+    expect(existsSync(file)).toBe(true);
+    expect(statSync(file).size).toBeGreaterThan(1_000);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

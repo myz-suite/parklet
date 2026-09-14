@@ -71,6 +71,16 @@ pair token: e59fd1316be7aa2fb839fd016fbe1b0b589ce08ee6af2db3
 
 配对信息保存在扩展的 `chrome.storage`，Chrome 重启后扩展会自动重连，无需重复操作。
 
+扩展图标上的**圆点角标**表示连接状态，鼠标悬停/打开 popup 可看引导：
+
+| 角标 | 状态                       | 含义与处理                                                                                                |
+| ---- | -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| 绿色 | connected                  | 已连接                                                                                                    |
+| 红色 | disconnected               | 曾经连接但已断开（server 未运行 / 网络不可达 / 服务端已停止）→ 启动 `plt serve` 后点 popup 里的 **Retry** |
+| 橙色 | unconfigured / auth_failed | 未配置，或配置无效（server 可达但 token 被拒）→ 按 popup 提示填写/重新复制 token                          |
+
+> server 用 `Ctrl+C` 停止时会先向扩展发送关闭帧（`1001 going away`），扩展立即识别为断开并显示红色；浏览器控制台仍会打印 `ERR_CONNECTION_REFUSED` 之类的网络日志（浏览器网络栈输出，无法由扩展抑制），属正常现象。
+
 ### 第 4 步：Agent 侧安装 parkinglot skill（可选）
 
 让 AI Agent 按标准工作流驱动浏览器：
@@ -105,31 +115,31 @@ plt logs --tail 20              # 命令账本
 
 ## CLI 命令参考
 
-全局选项：`--server <url>`（默认 `http://127.0.0.1:8787`）、`--json`（结构化输出）、`--timeout <ms>`（默认 30000）、`--session <id>`、`--path <file>`（screenshot 落盘）。
+全局选项：`--server <url>`（默认 `http://127.0.0.1:8787`）、`--json`（结构化输出）、`--timeout <ms>`（默认 30000）、`--session <id>`。
 
-| 命令                                                                                                                                                      | 说明                                               |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `plt status` / `plt ping`                                                                                                                                 | 扩展在线？server/协议版本                          |
-| `plt goto <url>`                                                                                                                                          | 导航（无 session 自动创建）                        |
-| `plt back` / `forward` / `reload`                                                                                                                         | 历史导航                                           |
-| `plt click <css>` / `plt click-text <text>`                                                                                                               | 点击元素 / 按文本点击                              |
-| `plt fill <css> <value>`                                                                                                                                  | 填充输入框（整体替换；可传 label/容器选择器）      |
-| `plt type <css> <text>`                                                                                                                                   | 逐键输入（可传 label/容器选择器）                  |
-| `plt press <key> [--selector <css>]`                                                                                                                      | 按键或组合键（如 `Control+c`）                     |
-| `plt hover <css>`                                                                                                                                         | 悬停                                               |
-| `plt select <css> --value <v>`（或 `--label <l>`）                                                                                                        | 选择下拉项                                         |
-| `plt scroll <up\|down\|top\|bottom\|amount>`                                                                                                              | 滚动                                               |
-| `plt screenshot [--path x.png] [--selector <css>]`                                                                                                        | 截图（元素截图需目标 tab active；`--full` 实验性） |
-| `plt extract [--selector <css>] [--mode text\|structured] [--article] [--depth N] [--offset N] [--limit N] [--max-chars N] [--visible-only] [--prettify]` | 文本 / DOM 树 / 文章正文                           |
-| `plt page-info`                                                                                                                                           | 页面 url/标题/视口/滚动                            |
-| `plt fetch <url> [--method] [--header "k: v"]… [--body]`                                                                                                  | 页面上下文网络请求（带登录态）                     |
-| `plt search <query> [--engine google\|duckduckgo] [--page N]`                                                                                             | 搜索引擎结果（默认 google；google 支持分页）       |
-| `plt tabs`                                                                                                                                                | 列出标签页                                         |
-| `plt tab <id>` / `plt tab-new <url>` / `plt tab-close [id]`                                                                                               | 切换 / 新建 / 关闭标签页                           |
-| `plt wait [--ms N \| --selector css \| --condition load]`                                                                                                 | 等待                                               |
-| `plt session list\|new\|use\|close`                                                                                                                       | session 管理                                       |
-| `plt logs [--tail N] [--follow]`                                                                                                                          | 命令账本                                           |
-| `plt events [--tail N]`                                                                                                                                   | tab 生命周期事件（拉取后清空未读）                 |
+| 命令                                                                                                                                                      | 说明                                                                                                                          |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `plt status` / `plt ping`                                                                                                                                 | 扩展在线？server/协议版本                                                                                                     |
+| `plt goto <url>`                                                                                                                                          | 导航（无 session 自动创建）                                                                                                   |
+| `plt back` / `forward` / `reload`                                                                                                                         | 历史导航                                                                                                                      |
+| `plt click <css>` / `plt click-text <text>`                                                                                                               | 点击元素 / 按文本点击                                                                                                         |
+| `plt fill <css> <value>`                                                                                                                                  | 填充输入框（整体替换；可传 label/容器选择器）                                                                                 |
+| `plt type <css> <text>`                                                                                                                                   | 逐键输入（可传 label/容器选择器）                                                                                             |
+| `plt press <key> [--selector <css>]`                                                                                                                      | 按键或组合键（如 `Control+c`）                                                                                                |
+| `plt hover <css>`                                                                                                                                         | 悬停                                                                                                                          |
+| `plt select <css> --value <v>`（或 `--label <l>`）                                                                                                        | 选择下拉项                                                                                                                    |
+| `plt scroll <up\|down\|top\|bottom\|amount>`                                                                                                              | 滚动                                                                                                                          |
+| `plt screenshot [--path x.png] [--selector <css>] [--format png\|jpeg]`                                                                                   | 截图；**未给 `--path` 时默认写入 `./screenshot-<时间戳>.<ext>` 并打印绝对路径**（元素截图需目标 tab active；`--full` 实验性） |
+| `plt extract [--selector <css>] [--mode text\|structured] [--article] [--depth N] [--offset N] [--limit N] [--max-chars N] [--visible-only] [--prettify]` | 文本 / DOM 树 / 文章正文                                                                                                      |
+| `plt page-info`                                                                                                                                           | 页面 url/标题/视口/滚动                                                                                                       |
+| `plt fetch <url> [--method] [--header "k: v"]… [--body]`                                                                                                  | 页面上下文网络请求（带登录态）                                                                                                |
+| `plt search <query> [--engine google\|duckduckgo] [--page N]`                                                                                             | 搜索引擎结果（默认 google；google 支持分页）                                                                                  |
+| `plt tabs`                                                                                                                                                | 列出标签页                                                                                                                    |
+| `plt tab <id>` / `plt tab-new <url>` / `plt tab-close [id]`                                                                                               | 切换 / 新建 / 关闭标签页                                                                                                      |
+| `plt wait [--ms N \| --selector css \| --condition load]`                                                                                                 | 等待                                                                                                                          |
+| `plt session list\|new\|use\|close`                                                                                                                       | session 管理                                                                                                                  |
+| `plt logs [--tail N] [--follow]`                                                                                                                          | 命令账本                                                                                                                      |
+| `plt events [--tail N]`                                                                                                                                   | tab 生命周期事件（拉取后清空未读）                                                                                            |
 
 > `plt extract --article` 输出 defuddle 提取的 **Markdown** 正文，并带 `title`/`site`/`url`/`wordCount` 等 YAML frontmatter；`--mode structured --selector` 的结果含 `total`/`offset`/`limit` 便于分页。
 
@@ -209,7 +219,7 @@ plt fetch https://api.github.com/user --header "Accept: application/json"
 ```bash
 pnpm install          # 安装依赖
 pnpm typecheck        # tsc --noEmit（三包）
-pnpm test             # vitest 单测（136 个用例）
+pnpm test             # vitest 单测（143 个用例，E2E 21 个）
 pnpm test:e2e         # Playwright E2E（需先 pnpm exec playwright install chromium；加载真实扩展跑配对/导航/连续性）
 pnpm build            # 编译 dist（server/protocol）+ esbuild 打包扩展
 pnpm lint / pnpm format

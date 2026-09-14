@@ -58,6 +58,7 @@ export async function startServer(): Promise<RunningServer> {
 export async function launchExtensionContext(
   serverUrl: string,
   token: string,
+  opts: { autopair?: boolean } = {},
 ): Promise<{
   context: BrowserContext;
   sw: Worker;
@@ -72,6 +73,10 @@ export async function launchExtensionContext(
 
   let sw = context.serviceWorkers()[0];
   if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 15_000 });
+
+  if (opts.autopair === false) {
+    return { context, sw, profileDir };
+  }
 
   // 自动配对：写入 storage 触发 background 的 storage.onChanged → connect()
   await sw.evaluate(
@@ -285,12 +290,13 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
 export async function runCli(
   serverUrl: string,
   args: string[],
+  opts: { cwd?: string } = {},
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const proc = spawn(
       process.execPath,
       [join(process.cwd(), 'packages/server/dist/cli.js'), '--server', serverUrl, ...args],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
+      { stdio: ['ignore', 'pipe', 'pipe'], ...(opts.cwd ? { cwd: opts.cwd } : {}) },
     );
     let stdout = '';
     let stderr = '';

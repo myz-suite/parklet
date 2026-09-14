@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Command } from 'commander';
 import {
   PROTOCOL_VERSION,
@@ -17,8 +18,20 @@ interface GlobalOpts {
   session?: string;
   /** screenshot 的 --path（写文件目标） */
   path?: string;
+  /** screenshot 的 --format（决定默认落盘后缀） */
+  format?: string;
   /** extract structured 的 --prettify（仅展示，不进 wire） */
   prettify?: boolean;
+}
+
+/** 未提供 --path 时的默认截图文件名（cwd 下，带时间戳）。 */
+function defaultScreenshotPath(format?: string): string {
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\..+$/, '')
+    .replace('T', '-');
+  return `screenshot-${stamp}.${format === 'jpeg' ? 'jpeg' : 'png'}`;
 }
 
 interface CachedEvent {
@@ -281,13 +294,14 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
     }
     case 'screenshot': {
       const d = data as { data?: string; path?: string };
-      const target = d.path ?? opts.path;
-      if (typeof target === 'string' && target.length > 0 && typeof d.data === 'string') {
-        writeFileSync(target, Buffer.from(d.data, 'base64'));
-        console.log(`📸 saved to ${target}`);
-      } else {
-        console.log(`📸 ${((d.data?.length ?? 0) / 1024).toFixed(1)} KB base64`);
+      if (typeof d.data !== 'string') {
+        console.log('📸 (no image data)');
+        break;
       }
+      // 未显式指定路径时默认写文件（cwd 下带时间戳），并打印绝对路径
+      const target = d.path ?? opts.path ?? defaultScreenshotPath(opts.format);
+      writeFileSync(target, Buffer.from(d.data, 'base64'));
+      console.log(`📸 saved to ${resolve(target)}`);
       break;
     }
     case 'list-tabs': {
@@ -376,6 +390,7 @@ async function run(
     timeout: String(opts.timeout ?? '30000'),
     session: typeof opts.session === 'string' ? opts.session : undefined,
     path: typeof opts.path === 'string' ? opts.path : undefined,
+    format: typeof opts.format === 'string' ? opts.format : undefined,
     prettify: Boolean(opts.prettify),
   };
   const res = await callCommand(method, params, g);
@@ -525,7 +540,7 @@ export function buildProgram(): Command {
     }),
     (c) =>
       c
-        .option('--path <file>', 'write to file (default: base64 to stdout)')
+        .option('--path <file>', 'output file (default: screenshot-<timestamp>.png)')
         .option('--selector <css>', 'capture a single element (tab must be active)')
         .option('--full', 'full page (experimental)')
         .option('--format <fmt>', 'png|jpeg', 'png'),
@@ -666,8 +681,13 @@ export function buildProgram(): Command {
       console.log(
         'load the extension, pair it with this token, then use `plt status`; Ctrl-C to stop.',
       );
+      let shuttingDown = false;
       const shutdown = async (): Promise<void> => {
-        await running.close();
+        if (shuttingDown) return;
+        shuttingDown = true;
+        console.log('\nshutting down…');
+        // 兜底超时：即使个别连接未能及时关闭也强制退出
+        await Promise.race([running.close(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
         process.exit(0);
       };
       process.on('SIGINT', () => void shutdown());

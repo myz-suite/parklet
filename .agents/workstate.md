@@ -12,8 +12,11 @@ v2 手动测试问题（`docs/v2-issues.md`）**已全部修复并验证**，工
 
 ## 最近完成
 
-- 2026-09-14：本地 mock + E2E 复现 5 个问题 → 修复 → 全量验证；文档更新（v2-issues 修复记录、protocol.md/zh、README、AGENTS）
-  - article：`defuddle` → `defuddle/full`，返回 Markdown + frontmatter（content.js ≈1.1MB）
+- 2026-09-14：平滑工作流修复（未提交）
+  - server：Ctrl+C 立即退出（`close(1001)` + `closeAllConnections()` + shutdown 兜底），消除 MaxListeners
+  - extension：`status.ts` 状态机 + action badge（绿/红/橙）+ `storage.session` 持久化 + token 错停止重连 + popup 引导/Retry
+  - `docs/v2-issues.md` 8 项全部有修复记录 + E2E；143 单测 + 19 E2E
+- 2026-09-14：本轮早前修复（article markdown、press、pagination、keepalive、minify）已提交 `af50279`
 - 2026-09-11：v2 全部 7 个增量落地并提交（407d0f8）
 
 ## 下一步

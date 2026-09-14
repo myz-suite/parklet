@@ -111,9 +111,35 @@ export class ExtensionHub extends EventEmitter {
       });
     }
     this.pending.clear();
+    // 主动终止活跃连接：否则 wss.close() 会等待长连接、http.Server.close() 永不回调。
+    // 先发 1001（going away）让扩展识别为“服务端停止”，随后强制 terminate 兜底。
+    const conn = this.conn;
+    this.conn = undefined;
+    this.authenticated = false;
+    if (conn !== undefined) {
+      try {
+        conn.close(1001, 'server shutting down');
+      } catch {
+        /* already closed */
+      }
+      setTimeout(() => {
+        try {
+          conn.terminate();
+        } catch {
+          /* already closed */
+        }
+      }, 150).unref();
+    }
     return new Promise((resolve) => {
       if (this.wss === undefined) return resolve();
-      this.wss.close(() => resolve());
+      let settled = false;
+      const done = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      this.wss.close(done);
+      setTimeout(done, 1500).unref();
     });
   }
 

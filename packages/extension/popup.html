@@ -17,8 +17,13 @@
         >Server URL <input id="server-url" type="text" placeholder="http://127.0.0.1:8787"
       /></label>
       <label>Token <input id="token" type="password" placeholder="pair token from server" /></label>
-      <button id="save">Save &amp; Connect</button>
-      <p class="hint">Start the server and copy the token from its output.</p>
+      <div class="actions">
+        <button id="save">Save &amp; Connect</button>
+        <button id="retry" class="secondary" disabled>Retry</button>
+      </div>
+      <p id="guidance" class="hint">
+        未配置：运行 <code>plt serve</code> 并复制其输出的 pair token。
+      </p>
     </section>
 
     <script src="popup.js"></script>

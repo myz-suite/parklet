@@ -167,3 +167,44 @@ Settings
 - **修复**：`snapshot.ts` 改用 `defuddle/full`（`markdown: true` 生效），`article` 结果新增 `description`/`domain`/`language`/`url` 字段，CLI 以 YAML frontmatter 打印。
 - **代价**：`defuddle/full` 含 turndown + 数学转换库；已开启 esbuild `minify`，`content.js` ≈755KB（未压缩时约 1.1MB），`background.js` ≈8KB。
 - **测试**：E2E `extract --article 不再误报 INVALID_PARAMS` 现断言输出为 Markdown（`**bold**`、`[link](…)`、无 `<p>`）且含 `title:`/`url:` frontmatter。
+
+### 6. server Ctrl+C 不立即退出 + `MaxListenersExceededWarning`（已修复）
+
+- **现象**：扩展连上后 Ctrl+C 不能立即停止，且出现 `11 close listeners added to [Server]`。
+- **根因**：`httpServer.close()` 会等待长连接（WebSocket），而 `ExtensionHub.close()` 只调用 `wss.close()`、未终止活跃连接 → `close()` 回调永不触发 → 进程不退出；用户反复 Ctrl+C 时每次 `server.close()` 都会给自己加一个 `close` 监听，累积超过 10 个触发 warning。
+- **修复**：`ExtensionHub.close()` 主动 `close(1001, 'server shutting down')` 并延迟 `terminate()` 兜底、加超时；`startServer.close()` 调用 `httpServer.closeAllConnections()`；`plt serve` 的 shutdown 加**重入保护 + 2s 兜底超时**后 `process.exit(0)`。
+- **验证**：脚本连上真实 WS 后发 SIGINT → **exit code 0、59ms、客户端收到 close code 1001**，无 MaxListeners 警告；单测 `ws/server.test.ts`。
+
+### 7. 扩展连接失败体验不平滑（已修复）
+
+- **现象**：reload 扩展且 server 不在时，控制台直接报 `WebSocket connection … ERR_CONNECTION_REFUSED`，且无状态提示。
+- **说明**：该报错是**浏览器网络栈**输出，扩展代码无法抑制；能做的是不把它当异常、并给出明确状态。
+- **修复（状态 badge + popup 引导）**：
+  - 新增 `status.ts` 状态机 `unconfigured | connecting | connected | auth_failed | disconnected`；
+  - action badge：绿=connected、红=disconnected、橙=unconfigured/auth_failed（connecting 保持上一个）；
+  - 状态持久化到 `chrome.storage.session`，SW 重启后 `restoreState()` 重设 badge；
+  - **token 被拒（close 4401/4400）→ 停止自动重连**，避免骚扰 server；`disconnected` 才退避重连；
+  - popup 按状态给引导（未配置 / token 错 / server 不可达）+ **Retry** 按钮。
+- **验证**：E2E 4 例（绿/橙 token 错/红 server 停止/橙未配置）；单测 `status.test.ts`。
+
+### 8. `type` 泛化 selector 报 `INTERNAL`（已修复）
+
+- **现象**：日志中 `{"method":"type","params":{"selector":"input"},...,"code":"INTERNAL"}`（04:37:57，Google）。
+- **修复**：`type`/`fill` 统一走 `resolveInput()`（自身可编辑 > label[for] > 最近 label/fieldset 唯一 > 后代唯一，否则 `TARGET_*`），不再对任意命中元素强转 input；泛化 selector（`input`、容器如 `form`）均可解析。
+- **测试**：E2E `type：泛化 selector（input / 容器）也能解析并输入`。
+
+### 9. `plt screenshot` 不带 `--path` 时只报体积、无目标（已修复）
+
+- **现象**：`plt screenshot` 输出 `📸 462.2 KB base64`，既没写文件也没给目标路径。
+- **修复**：未指定 `--path` 时默认落盘到 cwd 下的 `screenshot-<时间戳>.<png|jpeg>`（由 `--format` 决定后缀），并打印**绝对路径**；`--json` 仍返回原始 envelope（base64）供程序消费。
+- **测试**：E2E `screenshot CLI：未指定 --path 时默认落盘并打印路径`（临时 cwd，校验文件存在且 >1KB）。
+
+### 10. `plt ping` 显示 connected，紧接着命令报 `EXTENSION_OFFLINE extension disconnected`（已修复）
+
+- **现象**：`plt ping`（server-local）显示 `extension connected ✅`，下一条 `plt extract` 立刻报 `extension disconnected`（该文案来自 server `resetConnection()` = WS 在命令在途时被关闭）。
+- **根因**：扩展的 `connect()` **无并发/重复建连保护**，而 `alarms`、应用层心跳、`scheduleReconnect`、`storage.onChanged`、`onStartup` 都可能在 `ws===null` 时同时调用它（`connect()` 在 `await getConfig()` 前后各有一个窗口）。更糟的是 `ws.onclose`/`onerror` 直接操作全局 `ws`：旧 socket 的 close 会把已被新 socket 覆盖的 `ws` 置空。结果 server 端"新连接替换旧连接"（`close(4001)` + `resetConnection()`）会**丢弃在途命令**并引发连接抖动。`ping` 走 server 本地、不碰 WS，所以先显示 connected，下一条真实命令才暴露。
+- **修复**：
+  - `connect()` 增加 `connecting` 锁 + 已 CONNECTING/OPEN 则直接返回；
+  - 每个 socket 的 handler 都校验 `ws === socket`，旧连接事件不再影响当前连接；
+  - 新增 `forceReconnect()`：配置变更/手动 Retry 时**主动断开旧连接**再用新配置重连（否则加锁后会"连着旧配置不重连"）。
+- **验证**：E2E `连接稳定：短时间内多次配置变更后仍恢复并可用`；并用**临时回退对照**确认：去掉锁与 socket 校验后该用例失败，恢复后通过（即精确复现该 bug）。
