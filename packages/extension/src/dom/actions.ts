@@ -1,7 +1,7 @@
 import { findByCss, findByText, locate, toElementInfo, type Located } from './locator.js';
 import { collectForms, collectLinks } from './collect.js';
 import { extractPage, getScrollY, getViewport, type ExtractOptions } from './snapshot.js';
-import type { DomQueryMatch, ElementInfo, SearchResult } from '@parkinglot/protocol';
+import type { DomQueryMatch, ElementInfo, SearchResult } from '@parklet/protocol';
 
 /** DOM 层命令执行器：在页面上下文执行单个命令并返回命令特有结果。 */
 

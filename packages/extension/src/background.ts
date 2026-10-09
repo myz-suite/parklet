@@ -1,4 +1,4 @@
-import { isEvent, isRequest, PROTOCOL_VERSION } from '@parkinglot/protocol/runtime';
+import { isEvent, isRequest, PROTOCOL_VERSION } from '@parklet/protocol/runtime';
 import type {
   ContextSnapshot,
   EventMessage,
@@ -6,7 +6,7 @@ import type {
   Request,
   Response,
   SearchResult,
-} from '@parkinglot/protocol';
+} from '@parklet/protocol';
 import type {
   ContentCommand,
   ContentResult,
@@ -637,13 +637,13 @@ async function cropScreenshot(
 // 保活块整体防御：任一 API 不可用都不应中断顶层脚本（曾因缺 alarms 权限导致
 // chrome.alarms.create 抛错、后续监听器全部未注册、popup/WS 全失效）。
 try {
-  chrome.alarms.create('parkinglot-keepalive', { periodInMinutes: 0.5 });
+  chrome.alarms.create('parklet-keepalive', { periodInMinutes: 0.5 });
   chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name !== 'parkinglot-keepalive') return;
+    if (alarm.name !== 'parklet-keepalive') return;
     if (ws === null && connState !== 'auth_failed') void connect();
   });
 } catch (err) {
-  console.error('[parkinglot] alarms unavailable:', err);
+  console.error('[parklet] alarms unavailable:', err);
 }
 
 // 应用层心跳：Chrome 116+ 中 WebSocket 收发消息会重置 SW 空闲计时器，
@@ -659,7 +659,7 @@ try {
     }
   }, HEARTBEAT_INTERVAL_MS);
 } catch (err) {
-  console.error('[parkinglot] heartbeat unavailable:', err);
+  console.error('[parklet] heartbeat unavailable:', err);
 }
 
 // ---------------------------------------------------------------------------
@@ -674,7 +674,7 @@ try {
     }
   });
 } catch (err) {
-  console.error('[parkinglot] storage hook unavailable:', err);
+  console.error('[parklet] storage hook unavailable:', err);
 }
 
 // ---------------------------------------------------------------------------

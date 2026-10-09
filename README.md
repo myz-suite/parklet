@@ -1,8 +1,8 @@
-# ParkingLot
+# Parklet
 
 **Drive a real browser owned by the human user.**
 
-ParkingLot lets an AI agent control a real Chrome browser through a local relay. The agent sends `plt` commands (CLI or HTTP) to `parkinglot-server`, which forwards them over WebSocket to `parkinglot-extension` (Chrome MV3); the extension executes them in the user's own browser — with login state, cookies, and normal anti-bot behavior.
+Parklet lets an AI agent control a real Chrome browser through a local relay. The agent sends `plt` commands (CLI or HTTP) to `parklet-server`, which forwards them over WebSocket to `parklet-extension` (Chrome MV3); the extension executes them in the user's own browser — with login state, cookies, and normal anti-bot behavior.
 
 ## Requirements
 
@@ -14,19 +14,19 @@ ParkingLot lets an AI agent control a real Chrome browser through a local relay.
 ### 1. Server
 
 ```bash
-npm install -g @parkinglot/server
+npm install -g @parklet/server
 plt serve
 ```
 
 `plt serve` prints a **pair token** and the WebSocket URL, then blocks:
 
 ```
-parkinglot-server listening on http://127.0.0.1:8787
+parklet-server listening on http://127.0.0.1:8787
 extension websocket: ws://127.0.0.1:8787/ws
 pair token: 0123abcd…
 ```
 
-The token is persisted (default `~/.parkinglot/token`), so it stays the same across restarts.
+The token is persisted (default `~/.parklet/token`), so it stays the same across restarts.
 
 ### 2. Extension
 
@@ -56,7 +56,7 @@ plt goto https://example.com    # navigate (sets the current tab)
 plt extract                     # readable page text
 plt click-text "More information"
 plt screenshot                  # saves ./screenshot-<timestamp>.png and prints the path
-plt search "parkinglot"         # web search
+plt search "parklet"         # web search
 plt links                       # visible links grouped by href
 plt forms                       # visible form fields grouped by form
 ```
@@ -64,14 +64,14 @@ plt forms                       # visible form fields grouped by form
 ## Agent skill
 
 ```bash
-npx skills add myz-suite/parkinglot --skill parkinglot
+npx skills add myz-suite/parklet --skill parklet
 ```
 
 ## Documentation
 
-- `skills/parkinglot/references/protocol.md` — command & protocol reference
-- `skills/parkinglot/references/example.md` — worked examples
-- `skills/parkinglot/SKILL.md` — agent-facing usage guide
+- `skills/parklet/references/protocol.md` — command & protocol reference
+- `skills/parklet/references/example.md` — worked examples
+- `skills/parklet/SKILL.md` — agent-facing usage guide
 
 ## License
 

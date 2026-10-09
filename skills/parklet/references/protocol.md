@@ -1,6 +1,6 @@
-# ParkingLot Protocol Reference (v0.1.0-draft)
+# Parklet Protocol Reference (v0.1.0-draft)
 
-> Authoritative command reference for the `parkinglot` skill, describing the wire protocol between the agent-facing CLI/HTTP and the browser extension.
+> Authoritative command reference for the `parklet` skill, describing the wire protocol between the agent-facing CLI/HTTP and the browser extension.
 > Worked examples: [`example.md`](./example.md).
 
 The protocol follows the CDP/Playwright mental model: JSON-RPC-style envelopes (`id/method/params` → `id/result|error`) with flat kebab-case command names (one-to-one with CLI subcommands).
@@ -208,7 +208,7 @@ For selector-based results, `total` is the number of first-level elements (after
 | ------- | -------- | --------------------- | ------ |
 | `eval`  | `script` | `{ value?: unknown }` | always |
 
-`eval` runs a **complete script** (multiple statements, must contain `return`) in the page's **MAIN world** (page context, so it can read page globals like `window.React`) and returns its JSON-serialized result. `undefined` omits `value`; a result that cannot round-trip through JSON raises `NOT_SERIALIZABLE`. Isolated-world `eval` is impossible under the MV3 extension CSP, and **MAIN-world eval is still subject to the page's CSP** — pages with a strict `script-src` will fail with an injection error. It is disabled by default (`PARKINGLOT_DISABLED_COMMANDS`); enable it with `PARKINGLOT_ENABLE_EVAL=1` (an explicit `eval` entry in the disable list still wins), otherwise the server returns `EVAL_DISABLED`.
+`eval` runs a **complete script** (multiple statements, must contain `return`) in the page's **MAIN world** (page context, so it can read page globals like `window.React`) and returns its JSON-serialized result. `undefined` omits `value`; a result that cannot round-trip through JSON raises `NOT_SERIALIZABLE`. Isolated-world `eval` is impossible under the MV3 extension CSP, and **MAIN-world eval is still subject to the page's CSP** — pages with a strict `script-src` will fail with an injection error. It is disabled by default (`PARKLET_DISABLED_COMMANDS`); enable it with `PARKLET_ENABLE_EVAL=1` (an explicit `eval` entry in the disable list still wins), otherwise the server returns `EVAL_DISABLED`.
 
 ## Events (v1 minimal set)
 

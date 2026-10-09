@@ -34,13 +34,13 @@ export interface ProtocolErrorData {
 }
 
 /** 协议层错误：携带稳定的机器可读 code，供 CLI/Agent 决策。 */
-export class ParkinglotError extends Error {
+export class ParkletError extends Error {
   readonly code: ErrorCode;
   readonly data: ProtocolErrorData | undefined;
 
   constructor(code: ErrorCode, message: string, data?: ProtocolErrorData) {
     super(message);
-    this.name = 'ParkinglotError';
+    this.name = 'ParkletError';
     this.code = code;
     this.data = data;
   }

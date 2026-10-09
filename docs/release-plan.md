@@ -1,6 +1,6 @@
-# ParkingLot — Chrome Web Store 发布计划（release-plan）
+# Parklet — Chrome Web Store 发布计划（release-plan）
 
-> 目的：把 `parkinglot-extension` 作为 Chrome 扩展发布到 Chrome Web Store（CWS）前，需要完成的工作与准备素材清单。
+> 目的：把 `parklet-extension` 作为 Chrome 扩展发布到 Chrome Web Store（CWS）前，需要完成的工作与准备素材清单。
 > 适用：仓库根 `packages/extension`。当前 manifest 版本：`0.2.0`（`manifest.json`）。
 
 发布前请确认：**本清单不涉及功能开发**——默认扩展功能已稳定（真实 Chrome 端到端验证通过）。以下全部是商店上架的工作项。
@@ -9,7 +9,7 @@
 
 ## 1. 概述与前置条件
 
-ParkingLot 扩展的定位：**配套组件**——需要配合用户本机运行的 `parkinglot-server`（relay）使用；单独安装扩展没有用途。这直接影响商店描述与审核口径（详见 §5 文案）。
+Parklet 扩展的定位：**配套组件**——需要配合用户本机运行的 `parklet-server`（relay）使用；单独安装扩展没有用途。这直接影响商店描述与审核口径（详见 §5 文案）。
 
 前置条件：
 
@@ -27,12 +27,12 @@ ParkingLot 扩展的定位：**配套组件**——需要配合用户本机运�
 
 | 素材               | 规格                                                       | 状态 | 备注                                                                                      |
 | ------------------ | ---------------------------------------------------------- | ---- | ----------------------------------------------------------------------------------------- |
-| 扩展名称           | ≤ 30 字符建议；显示名                                      | [ ]  | 建议 "ParkingLot — Agent Browser Bridge"（与 manifest `name` 一致或更友好）               |
+| 扩展名称           | ≤ 30 字符建议；显示名                                      | [ ]  | 建议 "Parklet — Agent Browser Bridge"（与 manifest `name` 一致或更友好）               |
 | 简短描述           | 前 132 字符（列表页展示）                                  | [ ]  | 见 §5.1 草稿                                                                              |
 | 详细描述           | ≤ 4000 字符                                                | [ ]  | 见 §5.2 草稿                                                                              |
 | 分类 Category      | 单选                                                       | [ ]  | 建议 **Developer Tools**（另可选 "Productivity"）                                         |
 | 语言 Language      | 单选                                                       | [ ]  | English（zh 版本描述后续可加）                                                            |
-| 图标 icon          | **128×128 PNG**（方形）                                    | [ ]  | 需要设计一个 "🅿 ParkingLot" 主题图标；不可含商店外品牌/商标                               |
+| 图标 icon          | **128×128 PNG**（方形）                                    | [ ]  | 需要设计一个 "🅿 Parklet" 主题图标；不可含商店外品牌/商标                               |
 | 主截图 Screenshots | **至少 1 张**，最多 5 张；建议 1280×800 或 640×400 PNG/JPG | [ ]  | 用真实运行画面：popup 连接态、CLI 会话、浏览器操作示例（可用 `plt screenshot` 截取演示页） |
 | 开发者邮箱         | 账号注册邮箱                                               | [ ]  | 用于商店联系；建议建 `support@<你的域名>` 并置入隐私政策                                  |
 | 隐私政策 URL       | 需可公开访问的页面                                         | [ ]  | 无官网时可先用 GitHub Pages / gist 托管；内容模板见 §5.3                                  |
@@ -105,7 +105,7 @@ ls packages/extension/dist/      # manifest.json, background.js, content.js,
 
 - [ ] 清理 `dist/` 中的 `*.map`（如需发布 sourcemap 可选保留；发布包建议去除以减小体积并避免暴露源码结构——评估后决定，保持一致）
 - [ ] 核对 `manifest.json`：`version` 递增（SemVer，见 §7）；`name`/`description` 与商店一致；`minimum_chrome_version` 建议声明（依赖 `chrome.alarms` 0.5min → Chrome ≥ 120；可写明以阻止旧版本安装）
-- [ ] 压缩（**zip 根必须直接含 manifest.json**，不能带 dist/ 前缀）：`cd packages/extension/dist && zip -r ../parkinglot-extension-<version>.zip . -x "*.map"`（`-x "*.map"` 排除 sourcemap，产物更小）
+- [ ] 压缩（**zip 根必须直接含 manifest.json**，不能带 dist/ 前缀）：`cd packages/extension/dist && zip -r ../parklet-extension-<version>.zip . -x "*.map"`（`-x "*.map"` 排除 sourcemap，产物更小）
 - [ ] 用 CWS Developer Dashboard 上传 zip
 
 > 构建一致性：`pnpm build` 需在干净 checkout 上通过；发版前跑 `pnpm test`（102 用例）与 `pnpm lint`。
@@ -121,7 +121,7 @@ ls packages/extension/dist/      # manifest.json, background.js, content.js,
 ### 5.2 详细描述（草稿骨架，≤4000 字符；按需补充截图说明）
 
 ```
-ParkingLot lets an AI agent (or you, from the command line) control your real Chrome
+Parklet lets an AI agent (or you, from the command line) control your real Chrome
 browser with simple commands, while everything runs locally on your machine.
 
 What it does
@@ -134,8 +134,8 @@ What it does
 - Tabs: list, switch, open and close tabs
 
 How it works
-- Install this extension and pair it with a local parkinglot-server (run with
-  Node.js on your own computer, pnpm --filter @parkinglot/server start)
+- Install this extension and pair it with a local parklet-server (run with
+  Node.js on your own computer, pnpm --filter @parklet/server start)
 - Control it with the plt CLI or the /api HTTP endpoints
 - Every response carries a page context snapshot (url/title/navId), so an agent
   can always tell whether the page changed
@@ -150,7 +150,7 @@ Privacy & security
   on your own server
 
 Getting started
-1. Start the relay: pnpm --filter @parkinglot/server start
+1. Start the relay: pnpm --filter @parklet/server start
 2. Load dist/ unpacked, or install this package and pair the token in the popup
 3. plt status → connected; plt goto <url>; plt extract; ...
 
@@ -163,7 +163,7 @@ Full protocol & CLI reference: repository README (docs/protocol.md).
 
 ### 5.4 单用途说明（审核表单）
 
-> ParkingLot 的唯一用途是让用户（或用户授权的 AI agent）通过本地 relay 命令，在用户自己的 Chrome 会话中执行浏览器操作（导航、交互、提取、截图、搜索与带登录态的页面内请求）。它不收集遥测、不展示广告、不含任何远程内容。
+> Parklet 的唯一用途是让用户（或用户授权的 AI agent）通过本地 relay 命令，在用户自己的 Chrome 会话中执行浏览器操作（导航、交互、提取、截图、搜索与带登录态的页面内请求）。它不收集遥测、不展示广告、不含任何远程内容。
 
 ---
 

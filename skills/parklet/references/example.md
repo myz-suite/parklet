@@ -1,4 +1,4 @@
-# ParkingLot — Worked Examples
+# Parklet — Worked Examples
 
 Companion to [`protocol.md`](./protocol.md). Examples use the `plt` CLI; add `--json` to any
 command for the raw envelope (`{ tabId, context, data }`). Sample outputs are
@@ -239,7 +239,7 @@ active tab.
 
 ## Eval (advanced)
 
-`eval` is disabled by default; enable it on the server with `PARKINGLOT_ENABLE_EVAL=1`.
+`eval` is disabled by default; enable it on the server with `PARKLET_ENABLE_EVAL=1`.
 
 ```bash
 plt eval "return document.title"

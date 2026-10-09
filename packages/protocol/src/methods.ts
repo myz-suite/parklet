@@ -280,7 +280,7 @@ export interface WaitParams {
 }
 
 export interface EvalParams {
-  /** 完整脚本，必须包含 return；默认禁用（PARKINGLOT_ENABLE_EVAL=1 放行） */
+  /** 完整脚本，必须包含 return；默认禁用（PARKLET_ENABLE_EVAL=1 放行） */
   script: string;
 }
 

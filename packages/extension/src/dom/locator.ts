@@ -1,4 +1,4 @@
-import type { ElementBox, ElementInfo } from '@parkinglot/protocol';
+import type { ElementBox, ElementInfo } from '@parklet/protocol';
 
 /**
  * 定位器：CSS 选择器与可见文本（v1）。

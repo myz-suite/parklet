@@ -1,6 +1,6 @@
 /* global console, process */
 // Packages packages/extension/dist into a Chrome Web Store upload zip:
-// parkinglot-extension-<manifest version>.zip (manifest.json at the archive root,
+// parklet-extension-<manifest version>.zip (manifest.json at the archive root,
 // source maps excluded). Requires the `zip` binary on PATH.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -18,7 +18,7 @@ try {
   process.exit(1);
 }
 
-const out = join(root, `parkinglot-extension-${version}.zip`);
+const out = join(root, `parklet-extension-${version}.zip`);
 execFileSync('zip', ['-r', '-FS', out, '.', '-x', '*.map', '*.DS_Store'], {
   cwd: dist,
   stdio: 'inherit',

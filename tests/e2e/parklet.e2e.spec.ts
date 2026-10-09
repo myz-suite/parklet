@@ -281,7 +281,7 @@ test('extract --article 不再误报 INVALID_PARAMS', async ({ session }) => {
     const res = await runCli(session.serverUrl, ['extract', '--article']);
     expect(res.stderr).not.toContain('INVALID_PARAMS');
     expect(res.code).toBe(0);
-    expect(res.stdout).toContain('ParkingLot mock article');
+    expect(res.stdout).toContain('Parklet mock article');
     // 应为 Markdown 而非原始 HTML
     expect(res.stdout).not.toContain('<p>');
     expect(res.stdout).toContain('**bold**');

@@ -1,8 +1,8 @@
 {
-  "name": "parkinglot",
+  "name": "parklet",
   "version": "0.1.0",
   "private": true,
-  "description": "ParkingLot: Drive a real browser owned by the human user.",
+  "description": "Parklet: Drive a real browser owned by the human user.",
   "license": "MIT",
   "engines": {
     "node": ">=20"

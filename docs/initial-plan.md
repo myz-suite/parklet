@@ -1,10 +1,10 @@
-# ParkingLot — 初始设计与实施计划
+# Parklet — 初始设计与实施计划
 
-> **v2 变更（2026-09-11）**：HITL 已**完全移除**（approval 代码、`ask` mode、`approve`/`deny`、popup 批准队列）；`extract` 扩展 selector/structured（DOM 树）/article（defuddle）；`screenshot` 支持元素 selector（非 active tab 报 `TAB_NOT_ACTIVE`）；`fill`/`type` 智能解析 input；`press` 支持组合键；tab 关闭后 session 自动回退；新增 tab 生命周期事件（`tab.created`/`tab.removed`，`plt events`）。本文件保留为 v1 历史设计，文中 HITL 章节与 `SessionMode` 等**已作废**；命令/事件/错误码以 `docs/v2-incremental-plan.md` 与 `skills/parkinglot/references/protocol.md` 为准。
+> **v2 变更（2026-09-11）**：HITL 已**完全移除**（approval 代码、`ask` mode、`approve`/`deny`、popup 批准队列）；`extract` 扩展 selector/structured（DOM 树）/article（defuddle）；`screenshot` 支持元素 selector（非 active tab 报 `TAB_NOT_ACTIVE`）；`fill`/`type` 智能解析 input；`press` 支持组合键；tab 关闭后 session 自动回退；新增 tab 生命周期事件（`tab.created`/`tab.removed`，`plt events`）。本文件保留为 v1 历史设计，文中 HITL 章节与 `SessionMode` 等**已作废**；命令/事件/错误码以 `docs/v2-incremental-plan.md` 与 `skills/parklet/references/protocol.md` 为准。
 >
 > **状态**：v1 已实施（Phase 1–5 完成，真实 Chrome 152 端到端验证通过；v2 增量见 `docs/v2-incremental-plan.md`）
-> **项目**：ParkingLot — 面向 AI Agent 的浏览器控制基础设施
-> **组件**：`parkinglot-server`（relay 守护进程）、`parkinglot-extension`（Chrome MV3 扩展）、`@parkinglot/protocol`（共享协议包）、`parkinglot` skill（Agent 使用指南）
+> **项目**：Parklet — 面向 AI Agent 的浏览器控制基础设施
+> **组件**：`parklet-server`（relay 守护进程）、`parklet-extension`（Chrome MV3 扩展）、`@parklet/protocol`（共享协议包）、`parklet` skill（Agent 使用指南）
 
 ---
 
@@ -19,8 +19,8 @@
 | 术语                     | 含义                                                                                       |
 | ------------------------ | ------------------------------------------------------------------------------------------ |
 | **Agent**                | LLM 驱动的程序（本项目的使用者），通过 `plt` CLI（或 HTTP）向 server 发命令                |
-| **parkinglot-server**    | 常驻 relay 守护进程（Node + TypeScript）。一面接扩展的 WebSocket，一面接 Agent 的 CLI/HTTP |
-| **parkinglot-extension** | Chrome Manifest V3 扩展。持有 WebSocket 连接，把命令翻译为真实的浏览器操作                 |
+| **parklet-server**    | 常驻 relay 守护进程（Node + TypeScript）。一面接扩展的 WebSocket，一面接 Agent 的 CLI/HTTP |
+| **parklet-extension** | Chrome Manifest V3 扩展。持有 WebSocket 连接，把命令翻译为真实的浏览器操作                 |
 | **Session**              | 逻辑层寻址单元：`{ id, tabId, mode, navId, ... }`，由 server 维护，提供命令的连续性        |
 | **Tab**                  | 物理层寻址单元：浏览器标签页（extension 的 `tabId`）                                       |
 | **navId**                | 导航代数。每次页面导航递增，用于让 Agent 感知"页面上下文是否已变化"                        |
@@ -30,7 +30,7 @@
 
 ```
 ┌────────────┐   plt goto https://x   ┌───────────────────┐   WebSocket    ┌─────────────────────┐
-│   Agent    │ ────────────────────▶ │  parkinglot-server │ ─────────────▶ │  parkinglot-extension │
+│   Agent    │ ────────────────────▶ │  parklet-server │ ─────────────▶ │  parklet-extension │
 │  (LLM)     │ ◀──────────────────── │   (relay 守护进程)  │ ◀───────────── │   (Chrome MV3)       │
 └────────────┘   result + context    └───────────────────┘    token 配对   └──────────┬──────────┘
                                   ▲       │                                              │ CDP + content script
@@ -56,7 +56,7 @@
 
 ---
 
-## 2. 协议设计（`@parkinglot/protocol`）
+## 2. 协议设计（`@parklet/protocol`）
 
 ### 2.1 传输层
 
@@ -143,7 +143,7 @@ session 关闭或 tab 关闭 → 从 registry 移除；下次命令自动兜底�
 | 等待       | `wait`             | `ms` 或 `selector`（等到可见）或 `condition`（`networkidle`/`load`）                  | `context`                                       | 否                                                                  |
 | 会话       | `ping`             | —                                                                                     | `{ pong, version, extensionConnected }`         | 否                                                                  |
 |            | `get-status`       | —                                                                                     | 扩展在线、session 列表、配置摘要                | 否                                                                  |
-| 高级       | `eval`             | `expression`                                                                          | 序列化结果                                      | **默认禁用**，需 `PARKINGLOT_ENABLE_EVAL=1` + session `mode: trust` |
+| 高级       | `eval`             | `expression`                                                                          | 序列化结果                                      | **默认禁用**，需 `PARKLET_ENABLE_EVAL=1` + session `mode: trust` |
 
 > 定位器统一约定：CSS selector 作用于文档；`click-text` 走文本定位（可见性过滤 + 取唯一最优点）。后续可扩展 Playwright 风格 `locator` 字符串（`css=`/`text=`/`role=` 前缀）。
 
@@ -218,7 +218,7 @@ packages/server/src/
   config.ts           # env 配置加载与校验
   ws/server.ts        # WebSocket 服务端：accept/鉴权/注册/心跳
   router.ts           # 命令路由：校验 → 寻址 → 转发 → 超时 → 归一化响应
-  session.ts          # SessionRegistry：创建/复用/查询/关闭 + state file（~/.parkinglot/state.json）
+  session.ts          # SessionRegistry：创建/复用/查询/关闭 + state file（~/.parklet/state.json）
   approval.ts         # HITL 队列与状态机
   ledger.ts           # 命令账本（JSON lines 日志）
   cli.ts              # commander 命令行入口（子进程模式）
@@ -227,7 +227,7 @@ packages/server/src/
 
 ### 3.2 WebSocket Relay
 
-- 绑定 `127.0.0.1:PARKINGLOT_PORT`（默认 8787）。
+- 绑定 `127.0.0.1:PARKLET_PORT`（默认 8787）。
 - 扩展连接时发 `hello { token, extensionVersion }`，校验 token（默认通过 `plt pair` 生成并写入扩展配置/URL 参数）。
 - 心跳：每 15s ping / pong，失去响应 3 次判定离线。
 - 断线：extension 侧指数退避重连（1s→2s→…上限 30s），session registry 保留但标记离线；重连后自动恢复路由。
@@ -245,7 +245,7 @@ interface Session {
 }
 ```
 
-- registry 驻内存；默认 session 的 id 落 `~/.parkinglot/state.json`，容忍 server 重启。
+- registry 驻内存；默认 session 的 id 落 `~/.parklet/state.json`，容忍 server 重启。
 - 每个命令先"寻址"：resolve target → 返回 sessionId/tabId → 命令转发时带上 tabId。
 - 命令成功/失败都要更新 `lastUsedAt` 与 context 快照缓存。
 
@@ -306,7 +306,7 @@ HTTP 每次请求用独立随机 id；无鉴权（仅回环），文档注明风
 ### 3.7 命令账本（流量监控）
 
 - 每次命令（含 HITL 决策）记一行 JSON：`{ ts, id, method, params(截断敏感字段), result/error, durationMs, sessionId, tabId }`。
-- 写 `~/.parkinglot/ledger.jsonl`；`plt logs --follow` 实时 tail。
+- 写 `~/.parklet/ledger.jsonl`；`plt logs --follow` 实时 tail。
 - 敏感字段（cookie/密码等）默认脱敏：记录键名不记值，`body` 截断到 256B。
 - v1 监控范围 = 命令级；页面发出的网络请求不做逐条拦截（留 `Network.*` 扩展点）。
 
@@ -314,13 +314,13 @@ HTTP 每次请求用独立随机 id；无鉴权（仅回环），文档注明风
 
 | 变量                           | 默认            | 说明                       |
 | ------------------------------ | --------------- | -------------------------- |
-| `PARKINGLOT_PORT`              | 8787            | 监听端口                   |
-| `PARKINGLOT_BIND`              | 127.0.0.1       | 仅回环（勿改 0.0.0.0）     |
-| `PARKINGLOT_TOKEN`             | 自动生成        | 扩展连接配对 token         |
-| `PARKINGLOT_ALLOWED_HOSTS`     | 空（全部）      | 逗号分隔域名白名单（可选） |
-| `PARKINGLOT_DISABLED_COMMANDS` | `eval`          | 禁用的命令列表             |
-| `PARKINGLOT_ENABLE_EVAL`       | `0`             | 显式开启 eval              |
-| `PARKINGLOT_STATE_DIR`         | `~/.parkinglot` | state/ledger 目录          |
+| `PARKLET_PORT`              | 8787            | 监听端口                   |
+| `PARKLET_BIND`              | 127.0.0.1       | 仅回环（勿改 0.0.0.0）     |
+| `PARKLET_TOKEN`             | 自动生成        | 扩展连接配对 token         |
+| `PARKLET_ALLOWED_HOSTS`     | 空（全部）      | 逗号分隔域名白名单（可选） |
+| `PARKLET_DISABLED_COMMANDS` | `eval`          | 禁用的命令列表             |
+| `PARKLET_ENABLE_EVAL`       | `0`             | 显式开启 eval              |
+| `PARKLET_STATE_DIR`         | `~/.parklet` | state/ledger 目录          |
 
 ---
 
@@ -383,13 +383,13 @@ packages/extension/
 
 ---
 
-## 5. Parkinglot Skill 设计
+## 5. Parklet Skill 设计
 
-安装在 `skills/parkinglot/SKILL.md`（与 `.agents/skills/` 通过符号链接互通）。大纲：
+安装在 `skills/parklet/SKILL.md`（与 `.agents/skills/` 通过符号链接互通）。大纲：
 
 ```
 metadata: 名称、适用场景（需要浏览器操作时）、触发词
-1. 前置：启动 server（用 pnpm --filter @parkinglot/server start）、加载扩展并配对（打开 chrome://extensions → Load unpacked → packages/extension/dist）
+1. 前置：启动 server（用 pnpm --filter @parklet/server start）、加载扩展并配对（打开 chrome://extensions → Load unpacked → packages/extension/dist）
 2. 命令参考：表格（链接 references/protocol.md）
 3. 会话心智模型：session / tab / navId / context 快照——"响应里的 context 变了就是页面变了"
 4. 标准工作流模板：
@@ -419,8 +419,8 @@ metadata: 名称、适用场景（需要浏览器操作时）、触发词
 ## 7. LLM 使用示例（工作流模板）
 
 ```
-$ plt search "parkinglot browser extension"          # → 结果列表 [1..n]
-$ plt goto https://github.com/xxx/parkinglot          # → context{url,title,navId=1}
+$ plt search "parklet browser extension"          # → 结果列表 [1..n]
+$ plt goto https://github.com/xxx/parklet          # → context{url,title,navId=1}
 $ plt extract                                         # → 页面可读文本
 $ plt click-text "Installation"                       # → ElementInfo
 $ plt scroll down                                     # → 视口摘要
@@ -449,16 +449,16 @@ $ plt session list / use S1 / close S1  # 显式管理
 - 建立 `packages/protocol`、`packages/server`、`packages/extension` 三包骨架（各自 `package.json`/`tsconfig`/入口占位）
 - 验证：`pnpm install` 成功；`pnpm typecheck` 通过；`pnpm test` 有首个通过用例
 
-### Phase 2：协议层 `@parkinglot/protocol`
+### Phase 2：协议层 `@parklet/protocol`
 
 - 信封类型：`Request/Response/Error/Event` + 类型守卫；寻址字段 `sessionId/tabId`
 - 命令 type union 与 `Params↔Result` 映射；事件类型（`page.navigated`、`approval.*`、`Network.*` 位）
 - 公共类型 `ContextSnapshot/PageSnapshot/ElementInfo/SessionInfo`；错误码枚举
 - Zod schema：请求/响应校验（Postel）
 - vitest：信封、命令参数校验、错误码归一化
-- 产物：`skills/parkinglot/references/protocol.md`（命令参考，skill 引用的权威文档）
+- 产物：`skills/parklet/references/protocol.md`（命令参考，skill 引用的权威文档）
 
-### Phase 3：`parkinglot-server`（CLI + Relay + HITL + 账本）
+### Phase 3：`parklet-server`（CLI + Relay + HITL + 账本）
 
 - WS server：鉴权/注册/心跳/离线检测
 - SessionRegistry + state file 持久化；命令寻址优先级解析；context 快照缓存
@@ -469,7 +469,7 @@ $ plt session list / use S1 / close S1  # 显式管理
 - HTTP 端点：`/api/status`、`/api/command`、`/api/approve/:id`
 - 单测：寻址优先级、session 生命周期、离线/超时/审批状态机
 
-### Phase 4：`parkinglot-extension`（MV3）
+### Phase 4：`parklet-extension`（MV3）
 
 - MV3 骨架 + esbuild 构建 + manifest 权限审计
 - background：WS 客户端（token/重连/保活实测）+ 路由 + navId 追踪（webNavigation）
@@ -477,11 +477,11 @@ $ plt session list / use S1 / close S1  # 显式管理
 - popup：配置 + 状态 + HITL 批准队列
 - 单测：locator 解析、tab 路由、snapshot 纯逻辑（DOM mock）
 
-### Phase 5：parkinglot skill + 端到端接通
+### Phase 5：parklet skill + 端到端接通
 
-- 编写 `parkinglot` SKILL.md 并安装为 project skill（沿用 `.agents/skills/` 目录）
+- 编写 `parklet` SKILL.md 并安装为 project skill（沿用 `.agents/skills/` 目录）
 - 端到端冒烟：起 server → 加载扩展配对 → CLI 走通 goto/extract/click/scroll/screenshot/fetch/search → 验证 session 连续性（两次命令同一 context，navId 递增）
-- 收尾：README quick start、AGENTS.md 更新、`skills/parkinglot/references/protocol.md` 核对、首次 git 提交
+- 收尾：README quick start、AGENTS.md 更新、`skills/parklet/references/protocol.md` 核对、首次 git 提交
 
 ### 验收标准（MVP done）
 

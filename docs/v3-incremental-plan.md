@@ -2,7 +2,7 @@
 
 批准日期：2026-09-15
 状态：**已完成并验证**（Increment 0–7 全部落地；执行记录与偏差见文末）
-关联文档：`docs/TODO.md`、`docs/v2-incremental-plan.md`、`docs/protocol.md`（symlink 至 `skills/parkinglot/references/protocol.md`）
+关联文档：`docs/TODO.md`、`docs/v2-incremental-plan.md`、`docs/protocol.md`（symlink 至 `skills/parklet/references/protocol.md`）
 
 ## 背景
 
@@ -19,7 +19,7 @@ v2 已全部完成并验证。本 v3 从 `docs/TODO.md` 的四项出发，补齐
 
 | #   | 主题           | 决策                                                                                                                                                                                                                                                                                 |
 | --- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | eval 门控      | 修复 `PARKINGLOT_ENABLE_EVAL=1` 使其真正放行；显式 `PARKINGLOT_DISABLED_COMMANDS` 含 `eval` 优先于 `ENABLE_EVAL`，否则 `ENABLE_EVAL=1` 放行，否则默认禁用                                                                                                                            |
+| 1   | eval 门控      | 修复 `PARKLET_ENABLE_EVAL=1` 使其真正放行；显式 `PARKLET_DISABLED_COMMANDS` 含 `eval` 优先于 `ENABLE_EVAL`，否则 `ENABLE_EVAL=1` 放行，否则默认禁用                                                                                                                            |
 | 2   | eval 交付面    | 保留 HTTP `/api/command`，**新增 CLI `plt eval`**（string / `--file` / `--stdin`）                                                                                                                                                                                                   |
 | 3   | eval 契约      | 入参 `script`（完整脚本，**必须含 `return`**）；**MAIN world**（隔离世界的 `new Function` 被 MV3 CSP 恒定阻断，已实测）、async 包裹；返回 `{ value }`，`undefined` **省略 value**；**以 JSON 往返为唯一可序列化判据**，失败 → 新错误码 `NOT_SERIALIZABLE`；**不兼容旧 `expression`** |
 | 4   | selection      | 新命令 `selection`；`selector` 或 `text` 至少其一；返回 `{ text }`；input/textarea 走 `setSelectionRange`；`writeAccess: always`（改变页面选区，仅审计语义）                                                                                                                         |
@@ -122,19 +122,19 @@ export interface EvalParams {
 
 ### Increment 0: eval 门控修复 + 契约冻结
 
-**结果**：`PARKINGLOT_ENABLE_EVAL=1` 按文档生效；eval 的参数/返回/错误契约冻结。
+**结果**：`PARKLET_ENABLE_EVAL=1` 按文档生效；eval 的参数/返回/错误契约冻结。
 
 **变更**
 
 - `packages/server/src/config.ts`：重写门控判定（建议新增纯函数 `resolveDisabledCommands(env)` 便于单测）：
-  1. `PARKINGLOT_DISABLED_COMMANDS` 显式包含 `eval` → 禁用（最高优先）
-  2. 否则 `PARKINGLOT_ENABLE_EVAL=1` → 从禁用列表移除 `eval`
+  1. `PARKLET_DISABLED_COMMANDS` 显式包含 `eval` → 禁用（最高优先）
+  2. 否则 `PARKLET_ENABLE_EVAL=1` → 从禁用列表移除 `eval`
   3. 否则默认禁用（禁用列表回填 `eval`）
-  - **breaking 安全修复（challenge 修订）**：现状下 `PARKINGLOT_DISABLED_COMMANDS` 为**非空且不含 eval** 时会隐式放行 eval；新逻辑改为默认禁用。此行为变更需显式记录，并在文档/README 更新说明。
+  - **breaking 安全修复（challenge 修订）**：现状下 `PARKLET_DISABLED_COMMANDS` 为**非空且不含 eval** 时会隐式放行 eval；新逻辑改为默认禁用。此行为变更需显式记录，并在文档/README 更新说明。
 - `packages/protocol/src/errors.ts`：新增 `'NOT_SERIALIZABLE'`
 - 冻结 eval 契约（见上）
 
-**验证**：`pnpm --filter @parkinglot/server test`（新增 `config.test.ts` 用例：显式禁用优先 / `ENABLE_EVAL` 放行 / **非空列表不含 eval 时仍默认禁用** / 空列表默认禁用）+ `pnpm --filter @parkinglot/protocol typecheck`
+**验证**：`pnpm --filter @parklet/server test`（新增 `config.test.ts` 用例：显式禁用优先 / `ENABLE_EVAL` 放行 / **非空列表不含 eval 时仍默认禁用** / 空列表默认禁用）+ `pnpm --filter @parklet/protocol typecheck`
 
 ### Increment 1: Protocol 层更新
 
@@ -158,9 +158,9 @@ export interface EvalParams {
 - `packages/server/src/cli.ts:143` `exitCodeFor` 增 `NOT_SERIALIZABLE`（challenge 修订；否则落到退出码 1）
 - `packages/server/src/ledger.ts:36` `SENSITIVE_KEYS`：`expression → script`
 - `packages/server/src/router.test.ts:85` 旧 `expression` 用例改 `script`
-- 对外文档：`skills/parkinglot/references/protocol.md`（= `docs/protocol.md`）、`skills/parkinglot/SKILL.md`
+- 对外文档：`skills/parklet/references/protocol.md`（= `docs/protocol.md`）、`skills/parklet/SKILL.md`
 
-**验证**：`pnpm --filter @parkinglot/protocol test` + `pnpm typecheck`
+**验证**：`pnpm --filter @parklet/protocol test` + `pnpm typecheck`
 
 ### Increment 2: eval 升级
 
@@ -173,7 +173,7 @@ export interface EvalParams {
   - 返回前以 **JSON 往返为唯一判据**（challenge 修订）：`JSON.parse(JSON.stringify(value))` 成功才放行；失败（BigInt/循环引用/含函数与 DOM 节点导致的序列化问题）→ 抛 `NOT_SERIALIZABLE`。注意 `Map/Set` 会静默变 `{}`、`Date` 变字符串——接受该 JSON 语义
   - `undefined` → 返回 `{}`（省略 `value`）；其余放 `{ value }`
 - `packages/server/src/cli.ts`：新增 `plt eval` 子命令（位置参数 string，或 `--file <path>` / `--stdin`；三者互斥）与 `printResult` 分支
-- `packages/server/src/config.ts`：由 Increment 0 提供门控；`plt serve` 文档提示 `PARKINGLOT_ENABLE_EVAL=1`
+- `packages/server/src/config.ts`：由 Increment 0 提供门控；`plt serve` 文档提示 `PARKLET_ENABLE_EVAL=1`
 
 **验证**：`packages/extension/src/dom/actions.test.ts`（多语句 + return、await、undefined、不可序列化报错）+ `router.test.ts` + 手动 `plt eval --help`
 
@@ -238,9 +238,9 @@ export interface EvalParams {
 
 **变更**
 
-- `skills/parkinglot/references/protocol.md`（= `docs/protocol.md`）：新增三命令、eval 新语义、`NOT_SERIALIZABLE`、集成说明
-- `skills/parkinglot/SKILL.md`：命令表补 `eval` / `selection` / `links` / `forms`
-- `README.md`、`skills/parkinglot/references/example.md`、`AGENTS.md`：同步
+- `skills/parklet/references/protocol.md`（= `docs/protocol.md`）：新增三命令、eval 新语义、`NOT_SERIALIZABLE`、集成说明
+- `skills/parklet/SKILL.md`：命令表补 `eval` / `selection` / `links` / `forms`
+- `README.md`、`skills/parklet/references/example.md`、`AGENTS.md`：同步
 - `packages/*/package.json` + `packages/extension/manifest.json`：`0.2.0 → 0.3.0`
 - `docs/TODO.md`：勾掉四项
 
@@ -256,7 +256,7 @@ pnpm typecheck && pnpm test && pnpm lint && pnpm format
 
 - 全量：`pnpm typecheck && pnpm test && pnpm build && pnpm lint && pnpm format`
 - E2E：`pnpm test:e2e`（新增 links/forms/selection/search-snippet 的 mock 用例）
-- 手动：`plt --help` 命令列表；`PARKINGLOT_ENABLE_EVAL=1 plt eval "return document.title"`
+- 手动：`plt --help` 命令列表；`PARKLET_ENABLE_EVAL=1 plt eval "return document.title"`
 
 ## 未决事项
 
@@ -298,7 +298,7 @@ Increment 0–7 全部落地。验证：`pnpm typecheck` / `pnpm test`（167 单
 2. **forms 分页改为字段级**（原按分组）：多数页面仅 0–2 个 `<form>`，分组级分页形同虚设、无法阻止巨型单表。现跨分组扁平计数，`total` = 字段总数。
 3. **links/forms 加采集硬上限**（`MAX_ITEMS=2000`，DOM 顺序短路 + `truncated`）：分页在全量采集之后，`limit` 不减少工作量；避免大页面卡顿/超时。
 4. **forms password 值脱敏**：`input[type=password]` 固定返回 `'********'`。
-5. **Increment 0 明确为 breaking 安全修复**：非空 `PARKINGLOT_DISABLED_COMMANDS` 不含 eval 时，从“隐式放行”改为“默认禁用”，加测试覆盖。
+5. **Increment 0 明确为 breaking 安全修复**：非空 `PARKLET_DISABLED_COMMANDS` 不含 eval 时，从“隐式放行”改为“默认禁用”，加测试覆盖。
 6. **集成清单补 `cli.ts:143 exitCodeFor`**：否则 `NOT_SERIALIZABLE` 落到退出码 1。
 7. **Increment 6 结果重述为 best-effort**：mock 单测证明解析器，线上不承诺命中。
 8. **links/forms 各加 1 条真实浏览器 E2E**：happy-dom 的 `element.href` 相对解析与 `getComputedStyle`（`locator.ts:16`）不可靠。

@@ -127,7 +127,7 @@ Settings
 
 ## 修复记录（2026-09-14）
 
-本地 mock（`tests/e2e/support.ts` 的 `/search`、`/results`、`/list`、`/article`）复现全部问题；E2E 见 `tests/e2e/parkinglot.e2e.spec.ts`。
+本地 mock（`tests/e2e/support.ts` 的 `/search`、`/results`、`/list`、`/article`）复现全部问题；E2E 见 `tests/e2e/parklet.e2e.spec.ts`。
 
 ### 1. `extract --article` 报 `INVALID_PARAMS`（已修复）
 

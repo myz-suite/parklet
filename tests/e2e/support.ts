@@ -14,15 +14,15 @@ export interface RunningServer {
   stop: () => void;
 }
 
-/** 启动 parkinglot-server（固定端口 + 临时 state dir），返回 base url 与配对 token。 */
+/** 启动 parklet-server（固定端口 + 临时 state dir），返回 base url 与配对 token。 */
 export async function startServer(opts: { enableEval?: boolean } = {}): Promise<RunningServer> {
   const stateDir = mkdtempSync(join(tmpdir(), 'plt-e2e-'));
   const proc = spawn(process.execPath, [join(process.cwd(), 'packages/server/dist/index.js')], {
     env: {
       ...process.env,
-      PARKINGLOT_PORT: String(E2E_PORT),
-      PARKINGLOT_STATE_DIR: stateDir,
-      ...(opts.enableEval ? { PARKINGLOT_ENABLE_EVAL: '1' } : {}),
+      PARKLET_PORT: String(E2E_PORT),
+      PARKLET_STATE_DIR: stateDir,
+      ...(opts.enableEval ? { PARKLET_ENABLE_EVAL: '1' } : {}),
     },
     stdio: 'ignore',
   });
@@ -313,7 +313,7 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
     // 文章页：供 defuddle article 提取（含粗体/链接/列表，便于断言 markdown）
     if (url.pathname === '/article') {
       const para =
-        '<p>ParkingLot mock article body sentence explains how agents drive a real browser. </p>';
+        '<p>Parklet mock article body sentence explains how agents drive a real browser. </p>';
       send(
         `<!doctype html><html><head><title>Mock Article</title>` +
           '<meta property="og:title" content="Mock Article Title">' +

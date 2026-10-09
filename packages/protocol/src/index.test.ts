@@ -7,8 +7,8 @@ describe('protocol package skeleton', () => {
     expect(PROTOCOL_VERSION).toBe('0.1.0-draft');
   });
 
-  it('identifies itself with the parkinglot protocol name', () => {
-    expect(protocolName()).toBe('parkinglot');
-    expect(PROTOCOL_NAME).toBe('parkinglot');
+  it('identifies itself with the parklet protocol name', () => {
+    expect(protocolName()).toBe('parklet');
+    expect(PROTOCOL_NAME).toBe('parklet');
   });
 });

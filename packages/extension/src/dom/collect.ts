@@ -4,7 +4,7 @@ import type {
   FormsResult,
   LinkInfo,
   LinksResult,
-} from '@parkinglot/protocol';
+} from '@parklet/protocol';
 import { isVisible, visibleTextOf } from './locator.js';
 
 /**

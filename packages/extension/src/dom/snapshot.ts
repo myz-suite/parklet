@@ -8,7 +8,7 @@ import type {
   ExtractResult,
   PageSnapshot,
   Viewport,
-} from '@parkinglot/protocol';
+} from '@parklet/protocol';
 
 /** defuddle 以 CJS/UMD 发布（module.exports = 类），NodeNext 下默认导入类型退化为命名空间，这里显式收窄。 */
 interface ArticleParseResult {

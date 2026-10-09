@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, type EventMessage } from '@parkinglot/protocol';
+import { PROTOCOL_VERSION, type EventMessage } from '@parklet/protocol';
 import type { ServerConfig } from './config.js';
 import { loadConfig } from './config.js';
 import { EventCache, isCachedEvent } from './event-cache.js';
@@ -8,7 +8,7 @@ import { TargetState } from './target.js';
 import { startHttp } from './http.js';
 import { ExtensionHub } from './ws/server.js';
 
-export const SERVER_NAME = 'parkinglot-server';
+export const SERVER_NAME = 'parklet-server';
 export const SERVER_VERSION = PROTOCOL_VERSION;
 
 export interface RunningServer {

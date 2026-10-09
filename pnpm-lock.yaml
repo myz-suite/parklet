@@ -35,7 +35,7 @@ importers:
 
   packages/extension:
     dependencies:
-      '@parkinglot/protocol':
+      '@parklet/protocol':
         specifier: workspace:*
         version: link:../protocol
       defuddle:
@@ -73,7 +73,7 @@ importers:
 
   packages/server:
     dependencies:
-      '@parkinglot/protocol':
+      '@parklet/protocol':
         specifier: workspace:*
         version: link:../protocol
       commander:

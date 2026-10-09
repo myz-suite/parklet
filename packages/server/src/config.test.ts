@@ -16,7 +16,7 @@ afterEach(() => {
 
 describe('loadConfig', () => {
   it('applies defaults', () => {
-    const c = loadConfig({ PARKINGLOT_STATE_DIR: dir });
+    const c = loadConfig({ PARKLET_STATE_DIR: dir });
     expect(c.port).toBe(8787);
     expect(c.bind).toBe('127.0.0.1');
     expect(c.allowedHosts).toEqual([]);
@@ -26,26 +26,26 @@ describe('loadConfig', () => {
   });
 
   it('generates and persists a token to the state dir', () => {
-    const c = loadConfig({ PARKINGLOT_STATE_DIR: dir });
+    const c = loadConfig({ PARKLET_STATE_DIR: dir });
     expect(c.token).toMatch(/^[0-9a-f]{48}$/);
     expect(readFileSync(join(dir, 'token'), 'utf8').trim()).toBe(c.token);
   });
 
   it('reuses a persisted token across loads', () => {
-    const a = loadConfig({ PARKINGLOT_STATE_DIR: dir });
-    const b = loadConfig({ PARKINGLOT_STATE_DIR: dir });
+    const a = loadConfig({ PARKLET_STATE_DIR: dir });
+    const b = loadConfig({ PARKLET_STATE_DIR: dir });
     expect(a.token).toBe(b.token);
   });
 
   it('reads env overrides', () => {
     const c = loadConfig({
-      PARKINGLOT_STATE_DIR: dir,
-      PARKINGLOT_PORT: '9000',
-      PARKINGLOT_BIND: '0.0.0.0',
-      PARKINGLOT_ALLOWED_HOSTS: 'example.com, api.github.com',
-      PARKINGLOT_DISABLED_COMMANDS: 'eval, fetch',
-      PARKINGLOT_ENABLE_EVAL: '1',
-      PARKINGLOT_COMMAND_TIMEOUT_MS: '5000',
+      PARKLET_STATE_DIR: dir,
+      PARKLET_PORT: '9000',
+      PARKLET_BIND: '0.0.0.0',
+      PARKLET_ALLOWED_HOSTS: 'example.com, api.github.com',
+      PARKLET_DISABLED_COMMANDS: 'eval, fetch',
+      PARKLET_ENABLE_EVAL: '1',
+      PARKLET_COMMAND_TIMEOUT_MS: '5000',
     });
     expect(c.port).toBe(9000);
     expect(c.bind).toBe('0.0.0.0');
@@ -57,7 +57,7 @@ describe('loadConfig', () => {
   });
 
   it('rejects invalid ports with a fallback', () => {
-    const c = loadConfig({ PARKINGLOT_STATE_DIR: dir, PARKINGLOT_PORT: 'not-a-number' });
+    const c = loadConfig({ PARKLET_STATE_DIR: dir, PARKLET_PORT: 'not-a-number' });
     expect(c.port).toBe(8787);
   });
 });
@@ -67,21 +67,21 @@ describe('resolveDisabledCommands (eval gate)', () => {
     expect(resolveDisabledCommands({})).toEqual(['eval']);
   });
 
-  it('enables eval when PARKINGLOT_ENABLE_EVAL=1', () => {
-    expect(resolveDisabledCommands({ PARKINGLOT_ENABLE_EVAL: '1' })).toEqual([]);
+  it('enables eval when PARKLET_ENABLE_EVAL=1', () => {
+    expect(resolveDisabledCommands({ PARKLET_ENABLE_EVAL: '1' })).toEqual([]);
   });
 
-  it('explicit disable wins over PARKINGLOT_ENABLE_EVAL', () => {
+  it('explicit disable wins over PARKLET_ENABLE_EVAL', () => {
     expect(
       resolveDisabledCommands({
-        PARKINGLOT_DISABLED_COMMANDS: 'eval, fetch',
-        PARKINGLOT_ENABLE_EVAL: '1',
+        PARKLET_DISABLED_COMMANDS: 'eval, fetch',
+        PARKLET_ENABLE_EVAL: '1',
       }),
     ).toEqual(['eval', 'fetch']);
   });
 
   it('keeps eval disabled when a non-empty disable list omits it (breaking fix)', () => {
-    expect(resolveDisabledCommands({ PARKINGLOT_DISABLED_COMMANDS: 'fetch' })).toEqual([
+    expect(resolveDisabledCommands({ PARKLET_DISABLED_COMMANDS: 'fetch' })).toEqual([
       'fetch',
       'eval',
     ]);
@@ -90,8 +90,8 @@ describe('resolveDisabledCommands (eval gate)', () => {
   it('enables eval with a non-eval disable list when explicitly opted in', () => {
     expect(
       resolveDisabledCommands({
-        PARKINGLOT_DISABLED_COMMANDS: 'fetch',
-        PARKINGLOT_ENABLE_EVAL: '1',
+        PARKLET_DISABLED_COMMANDS: 'fetch',
+        PARKLET_ENABLE_EVAL: '1',
       }),
     ).toEqual(['fetch']);
   });

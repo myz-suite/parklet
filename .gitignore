@@ -7,7 +7,7 @@ dist/
 *.tsbuildinfo
 
 # Local state / secrets
-.parkinglot/
+.parklet/
 .reasonix/
 .env
 .env.local

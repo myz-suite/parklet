@@ -10,13 +10,13 @@ import {
   PROTOCOL_VERSION,
   type ProtocolError,
   type Response,
-} from '@parkinglot/protocol';
+} from '@parklet/protocol';
 import type { ServerConfig } from './config.js';
 import type { EventCache } from './event-cache.js';
 import type { Ledger } from './ledger.js';
 import type { Router } from './router.js';
 
-export const SERVER_NAME = 'parkinglot-server';
+export const SERVER_NAME = 'parklet-server';
 export const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
 export interface HttpDeps {

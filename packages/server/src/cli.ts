@@ -9,7 +9,7 @@ import {
   type Method,
   type ProtocolError,
   type Response,
-} from '@parkinglot/protocol';
+} from '@parklet/protocol';
 import { startServer } from './index.js';
 
 /** CLI 版本 = 本包 package.json 的 version（与线协议 PROTOCOL_VERSION 不同概念）。 */
@@ -74,7 +74,7 @@ async function callCommand(
       id: '',
       error: {
         code: 'EXTENSION_OFFLINE',
-        message: `cannot reach server at ${base}: ${(err as Error).message}. Start it with: pnpm --filter @parkinglot/server start`,
+        message: `cannot reach server at ${base}: ${(err as Error).message}. Start it with: pnpm --filter @parklet/server start`,
       },
     } satisfies ProtocolError;
   }
@@ -495,7 +495,7 @@ async function run(
 export function buildProgram(): Command {
   const program = new Command()
     .name('plt')
-    .description('ParkingLot: drive a real browser owned by the human user')
+    .description('Parklet: drive a real browser owned by the human user')
     .version(`${CLI_PACKAGE_VERSION} (protocol ${PROTOCOL_VERSION})`)
     .option('--server <url>', 'server base URL', 'http://127.0.0.1:8787')
     .option('--json', 'output structured JSON (envelope)')
@@ -856,7 +856,7 @@ Run \`plt <command> --help\` for command-specific options.`,
       c.option('--ms <n>').option('--selector <css>').option('--condition <c>', 'networkidle|load'),
   );
 
-  // 高级：页面脚本执行（默认禁用，需 server 侧 PARKINGLOT_ENABLE_EVAL=1）
+  // 高级：页面脚本执行（默认禁用，需 server 侧 PARKLET_ENABLE_EVAL=1）
   register(
     program,
     'eval',
@@ -873,7 +873,7 @@ Run \`plt <command> --help\` for command-specific options.`,
   // 启动 relay server（npm -g 安装后的便捷入口）
   program
     .command('serve')
-    .description('run the parkinglot relay server (blocks; default http://127.0.0.1:8787)')
+    .description('run the parklet relay server (blocks; default http://127.0.0.1:8787)')
     .option('--port <n>', 'listen port')
     .option('--token <t>', 'pairing token (default: persisted auto-generated)')
     .action(async function (this: Command) {
@@ -882,7 +882,7 @@ Run \`plt <command> --help\` for command-specific options.`,
       if (opts.port !== undefined) overrides.port = Number(opts.port);
       if (opts.token !== undefined) overrides.token = opts.token;
       const running = await startServer(overrides);
-      console.log(`parkinglot-server listening on ${running.url}`);
+      console.log(`parklet-server listening on ${running.url}`);
       console.log(`extension websocket: ${running.wsPath}`);
       console.log(`pair token: ${running.token}`);
       console.log(

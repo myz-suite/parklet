@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "ParkingLot",
+  "name": "Parklet",
   "version": "0.4.0",
   "minimum_chrome_version": "120",
-  "description": "ParkingLot: Drive a real browser owned by the human user.",
+  "description": "Parklet: Drive a real browser owned by the human user.",
   "permissions": ["tabs", "scripting", "webNavigation", "storage", "alarms"],
   "host_permissions": ["<all_urls>"],
   "background": {
@@ -11,7 +11,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "ParkingLot",
+    "default_title": "Parklet",
     "default_icon": {
       "128": "icons/icon128.png"
     }

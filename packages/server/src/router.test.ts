@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { EventMessage, ProtocolError, Request, Response } from '@parkinglot/protocol';
+import type { EventMessage, ProtocolError, Request, Response } from '@parklet/protocol';
 import type { ServerConfig } from './config.js';
 import { loadConfig } from './config.js';
 import { Ledger } from './ledger.js';
@@ -52,7 +52,7 @@ let ctx: TestContext;
 
 beforeEach(() => {
   const dir = mkdtempSync(join(tmpdir(), 'pl-router-'));
-  const config = loadConfig({ PARKINGLOT_STATE_DIR: dir });
+  const config = loadConfig({ PARKLET_STATE_DIR: dir });
   const target = new TargetState();
   const ledger = new Ledger(dir);
   const hub = new FakeHub();

@@ -1,7 +1,7 @@
 # Kimi 全量对话导出 — 实战日志
 
-> 目的：用 ParkingLot（`plt`）把 kimi.com 的全部历史会话导出为每会话一个 JSON（含时间戳），
-> 并记录本次实战中工具的能力、缺陷与改进点。这是改进 ParkingLot 的一手案例材料。
+> 目的：用 Parklet（`plt`）把 kimi.com 的全部历史会话导出为每会话一个 JSON（含时间戳），
+> 并记录本次实战中工具的能力、缺陷与改进点。这是改进 Parklet 的一手案例材料。
 
 ## 1. 用户需求
 
@@ -89,7 +89,7 @@
 8. **大量命令开销**：252 个会话 × 逐会话导航+多次提取，命令次数极大；无批量/脚本化能力（每命令一个进程）。
 9. **无网络拦截 / 无剪贴板读取**：不能直接拿页面 XHR 响应或「复制」按钮写入的 Markdown。
 
-## 6. 改进方案（给 ParkingLot）
+## 6. 改进方案（给 Parklet）
 
 - **DOM 精确取文**：`extract` 增加「按 selector 取节点的完整文本、不截断、直接输出纯 JSON 到文件」的模式（如 `--raw --out file.json`），去掉上下文头/分页尾巴。
 - **Markdown 重建**：新增 `extract --selector X --to markdown`（或 `html-to-md`），把选中节点的 HTML 转成 Markdown（代码块/列表/表格/链接）。
@@ -142,7 +142,7 @@
 
 - 新增 `extract --mode html`：按 selector 返回每个匹配元素的 **`outerHTML`**（第一层列表 = 匹配元素本身；无文本截断），结果 `{ mode:'html', items:string[], total, offset?, limit? }`。
 - 移除 structured 的 500 字符截断（`MAX_NODE_TEXT` 删除；节点预算 500 保留）。
-- 改动文件：`protocol/src/methods.ts`、`protocol/src/schemas.ts`、`extension/src/dom/snapshot.ts`、`server/src/cli.ts`、`protocol/schemas.test.ts`、`extension/dom/snapshot.test.ts`、`skills/parkinglot/references/protocol.md`。
+- 改动文件：`protocol/src/methods.ts`、`protocol/src/schemas.ts`、`extension/src/dom/snapshot.ts`、`server/src/cli.ts`、`protocol/schemas.test.ts`、`extension/dom/snapshot.test.ts`、`skills/parklet/references/protocol.md`。
 - 验证：`pnpm typecheck && pnpm test`（protocol 37 / server 52 / extension 80）`&& pnpm lint && pnpm build` 全绿；扩展已重建，**需在 chrome://extensions 重载 unpacked 扩展**后生效。
 - 用途：`plt extract --mode html --selector ".segment-content-box"` 拿到完整 HTML，再按 class 区分 thinking（`.toolcall-content-text`/`.toolcall-flow`）与 content（`.markdown`）。
 
@@ -153,7 +153,7 @@
 - 输出目录：仓库内 `exports/kimi`（已在 `.gitignore` 忽略 `exports/`）。
 - 会话/消息时间戳：会话级有（历史页日期）；**消息级 DOM 无时间元素**，仅在部分 thinking 文本里出现 `当前会话时间 YYYY-MM-DD HH:mm +08:00`（已用正则捕获）。
 
-### 9.7 改进项更新（给 ParkingLot）
+### 9.7 改进项更新（给 Parklet）
 
 - [ ] `scroll` 支持滚动内部容器（`--selector` + `scrollBy`/`scrollTop`），或新增 `scroll-to <selector>` 明确语义。
 - [x] `extract --mode html`（outerHTML、无截断）。
@@ -237,7 +237,7 @@
 ### 11.3 安全问题 / 风险
 
 - **敏感数据明文落地**：16.2 MB 私人对话（含 thinking）明文 JSON；无提示/加密/审批（已人工 `.gitignore exports/`）。
-- **账本记录 URL**：`ledger.ts` 敏感键不含 `url`，`goto` 的会话 URL（含 chat id）与 `search` query 持久化到 `~/.parkinglot/ledger.jsonl`。
+- **账本记录 URL**：`ledger.ts` 敏感键不含 `url`，`goto` 的会话 URL（含 chat id）与 `search` query 持久化到 `~/.parklet/ledger.jsonl`。
 - **HTTP API 无鉴权/无 Origin 校验**：批量期间任意本机进程（或网站端 localhost CSRF）可驱动浏览器；配合 `<all_urls>` + 登录态影响面大。
 - **单脚本可批量外泄全部历史**：无速率限制/二次确认/默认域白名单（`allowedHosts` 空=全放行）。
 - 正面：`eval` 默认禁用、WS 需 token、server 仅回环。
@@ -272,7 +272,7 @@
 
 ### 12.2 移除/新增
 
-- 删除：`packages/server/src/session.ts`（含 `SessionRegistry`）、`session.test.ts`、`~/.parkinglot/sessions.json` 的使用、`/api/session`、`get-status.sessions`、`SessionInfo`、信封 `sessionId`、`SESSION_NOT_FOUND`/`SESSION_TAB_CLOSED`、`--session`、`plt session`。
+- 删除：`packages/server/src/session.ts`（含 `SessionRegistry`）、`session.test.ts`、`~/.parklet/sessions.json` 的使用、`/api/session`、`get-status.sessions`、`SessionInfo`、信封 `sessionId`、`SESSION_NOT_FOUND`/`SESSION_TAB_CLOSED`、`--session`、`plt session`。
 - 新增：`packages/server/src/target.ts`（`TargetState`，内存软指针）、错误码 `TAB_CLOSED`、CLI 全局 `--tab <id>`、`get-status.currentTabId`。
 - 扩展：去掉 `sessionId` 透传；tab 失效映射由 `SESSION_TAB_CLOSED` → `TAB_CLOSED`。
 

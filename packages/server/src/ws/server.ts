@@ -5,12 +5,12 @@ import {
   isError,
   isEvent,
   isResponse,
-  ParkinglotError,
+  ParkletError,
   type EventMessage,
   type ProtocolError,
   type Request,
   type Response,
-} from '@parkinglot/protocol';
+} from '@parklet/protocol';
 
 export const HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_MISSED_PONGS = 3;
@@ -276,4 +276,4 @@ export function toExtensionOffline(id: string): ProtocolError {
   };
 }
 
-export { ParkinglotError };
+export { ParkletError };

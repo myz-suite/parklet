@@ -1,11 +1,11 @@
 /**
- * @parkinglot/protocol — 共享协议层。
+ * @parklet/protocol — 共享协议层。
  *
  * 内容：消息信封（Request/Response/Error/Event）、命令全集与类型映射、
  * 公共类型（ContextSnapshot/PageSnapshot/ElementInfo/SessionInfo…）、
  * 错误码、Zod 校验 schema。
  *
- * 协议权威文档：skills/parkinglot/references/protocol.md
+ * 协议权威文档：skills/parklet/references/protocol.md
  */
 export { PROTOCOL_NAME, PROTOCOL_VERSION, protocolName } from './constants.js';
 

@@ -2,7 +2,7 @@
 
 批准日期：2026-09-11
 状态：**已完成并验证**（7 个增量全部落地；执行记录与偏差见文末）
-关联文档：`docs/protocol.md`（协议参考，symlink 至 `skills/parkinglot/references/protocol.md`）
+关联文档：`docs/protocol.md`（协议参考，symlink 至 `skills/parklet/references/protocol.md`）
 
 ## 背景
 
@@ -48,8 +48,8 @@ review + challenge 后落实的修订（`### 用户 review 修订（2026-09-11�
 用户在最终 review 中对照真实代码核实提出的修正，已全部落实：
 
 - **高优先级**
-  1. **文档对齐范围补全**：除 `protocol.md`/`initial-plan.md`/`AGENTS.md` 外，`skills/parkinglot/SKILL.md`（`:32` 命令表、`:53` 事件表含 approve/ask）、`skills/parkinglot/references/protocol.zh.md`、`packages/extension/popup.html` + `popup.css`、`packages/server/package.json` + `packages/extension/package.json` description 也宣传 HITL → 全部纳入 Increment 7 清单（各带行号）。
-  2. **symlink 关系**：`docs/protocol.md` 是 `skills/parkinglot/references/protocol.md` 的 symlink（同一文件），`.agents/skills/parkinglot` 是对 `../../skills/parkinglot` 的目录 symlink → **文档对齐只改主文件 `skills/parkinglot/references/protocol.md`（+ 中文版 `protocol.zh.md`），不再列 `.agents` 副本**，避免误改出两个版本。
+  1. **文档对齐范围补全**：除 `protocol.md`/`initial-plan.md`/`AGENTS.md` 外，`skills/parklet/SKILL.md`（`:32` 命令表、`:53` 事件表含 approve/ask）、`skills/parklet/references/protocol.zh.md`、`packages/extension/popup.html` + `popup.css`、`packages/server/package.json` + `packages/extension/package.json` description 也宣传 HITL → 全部纳入 Increment 7 清单（各带行号）。
+  2. **symlink 关系**：`docs/protocol.md` 是 `skills/parklet/references/protocol.md` 的 symlink（同一文件），`.agents/skills/parklet` 是对 `../../skills/parklet` 的目录 symlink → **文档对齐只改主文件 `skills/parklet/references/protocol.md`（+ 中文版 `protocol.zh.md`），不再列 `.agents` 副本**，避免误改出两个版本。
   3. **Increment 3 回退语义**：`resolve()`（`session.ts:127`）是**同步**函数，不调用扩展，无法在 resolve 时得知"extension 报 tab 类错误"；`tab.removed` → `unbindTab` 置 `tabId=undefined`（`:136-138`）；`resolve()` 遇 `undefined` 不再抛 `SESSION_TAB_CLOSED`，改为回退 `latestTabId` 并重绑；**回退到全局最近激活 tab（`hub.latestTabId`，仅由 `tab-activated` 更新）**。
   4. **tab 失效错误码**：`chrome.tabs.get` 抛 "No tab with id" 目前被 `background.ts:208` 包成 `INTERNAL`，识别不可靠 → 扩展 dispatch 层直接映射为稳定码 `SESSION_TAB_CLOSED`（语义 ="目标 tab 已不存在"），server 据此触发防御性 `unbindTab`，**失败命令不重试**（仅影响后续）。
   5. **defuddle 构建工具**：扩展用 **esbuild**（`build.config.mjs:5`，format iife、target chrome120），非 vite → 打包确认改写为 esbuild 路径，评估 content script 体积。
@@ -113,7 +113,7 @@ review + challenge 后落实的修订（`### 用户 review 修订（2026-09-11�
 - `packages/protocol/src/schemas.ts`：更新 extract/screenshot Zod schema（参照参数语义章节）；**extract schema 加 `.refine`：`article` 与 `mode` 二者不可同时提供**（互斥在 schema 层强制，不只是注释）
 - `packages/protocol/src/envelope.ts`：EVENT_NAMES 新增 `'tab.created'`、`'tab.removed'`；移除 `'approval.requested'`/`'approval.responded'`/`'approval.respond'`
 
-**验证**：`pnpm --filter @parkinglot/protocol typecheck` + `pnpm --filter @parkinglot/protocol test`
+**验证**：`pnpm --filter @parklet/protocol typecheck` + `pnpm --filter @parklet/protocol test`
 
 ### Increment 2: 删除 HITL（范围已扩充）
 
@@ -121,7 +121,7 @@ review + challenge 后落实的修订（`### 用户 review 修订（2026-09-11�
 
 - 删除：`packages/server/src/approval.ts` + `approval.test.ts`
 - `packages/server/src/ledger.ts`：`LedgerOutcome` 移除 `'pending'|'approved'|'denied'|'timeout'`（`:4`，仅留 ok/error）
-- `packages/server/src/config.ts`：移除 `approvalTimeoutMs` + `PARKINGLOT_APPROVAL_TIMEOUT_MS` 环境变量读取；`config.test.ts` 同步
+- `packages/server/src/config.ts`：移除 `approvalTimeoutMs` + `PARKLET_APPROVAL_TIMEOUT_MS` 环境变量读取；`config.test.ts` 同步
 - `packages/server/src/router.ts`：移除 HITL 挂起分支（`mode === 'ask'`）+ `get-status` config 中 `approvalTimeoutMs` 暴露（`:342`）；`router.test.ts` 删除 HITL 测试，`RouterDeps` 重构（移除 `approval` 注入）
 - `packages/server/src/session.ts`：Session 移除 `mode` 字段 + `setMode()` 方法 + `create()` 的 `mode` 选项；关联的 `session.test.ts`（mode 相关断言）同步
 - `packages/server/src/http.ts`：移除 `POST /api/approve/:requestId`、`pendingApprovals`、`approvalTimeoutMs` 状态；session create 不再传 mode（:148）
@@ -132,7 +132,7 @@ review + challenge 后落实的修订（`### 用户 review 修订（2026-09-11�
 - `packages/extension/src/shared/messages.ts`：移除 approvals 消息类型
 - `packages/server/src/ws/server.ts`：更新 HITL 相关注释
 - `packages/extension/popup.html` + `popup.css`：移除 approval 区域（`#approvals`、`#approval-list`、`#approvals-empty`）
-- `tests/e2e/parkinglot.e2e.spec.ts`：移除 HITL 测试 + helpers（实际名：`sessionMode`（:134）、`firstPendingRequestId`（:148）、`respondApproval`（:162））
+- `tests/e2e/parklet.e2e.spec.ts`：移除 HITL 测试 + helpers（实际名：`sessionMode`（:134）、`firstPendingRequestId`（:148）、`respondApproval`（:162））
 - `packages/protocol/src/methods.ts`：`METHOD_META` 保留 `writeAccess` 字段（供审计/日志），`methods.test.ts` 的 HITL 分类测试标题改为「classifies write access for each method」
 - 文档占位：`protocol.md` 中 HITL 章节标记待删（正式移除在 Increment 7）
 
@@ -208,7 +208,7 @@ parseKeyCombo("Control+c") → { key: 'c', modifiers: { ctrl, shift, alt, meta }
   - `depth` 不含 root，默认 3，不设上限
   - `visibleOnly` 过滤第一层列表中不可见元素（子树照常）
   - **总节点预算 `maxNodes`=500**（**固定常量，不进 `ExtractParams`/schema**），超限截断并设 `truncated: true`
-- article → defuddle `new Defuddle(document, { contentSelector, markdown: true }).parse()`，`contentSelector` = `params.selector`（未提供则靠自动检测）；**静态 top-level import**（MV3 content script 动态 import 不可靠）；需先 `pnpm --filter @parkinglot/extension add defuddle`
+- article → defuddle `new Defuddle(document, { contentSelector, markdown: true }).parse()`，`contentSelector` = `params.selector`（未提供则靠自动检测）；**静态 top-level import**（MV3 content script 动态 import 不可靠）；需先 `pnpm --filter @parklet/extension add defuddle`
 - **打包确认（review 修订）**：扩展构建是 **esbuild**（`build.config.mjs:5`，format iife、target chrome120），非 vite。确认 esbuild 将 defuddle（core bundle，无依赖）打进 content.js chunk，并评估 content script 体积增量
 
 **验证**：`pnpm typecheck` + `pnpm test`（新增对应单元测试）
@@ -247,13 +247,13 @@ parseKeyCombo("Control+c") → { key: 'c', modifiers: { ctrl, shift, alt, meta }
 
 ### Increment 7: 文档对齐（完整清单）
 
-**symlink 说明（review 修订）**：`docs/protocol.md` 是指向 `skills/parkinglot/references/protocol.md` 的**符号链接**（symbolic link，二者是同一文件）；`.agents/skills/parkinglot` → `../../skills/parkinglot`（目录 symlink）。**只需改一处主文件 `skills/parkinglot/references/protocol.md`（= docs/protocol.md）+ 中文版 `protocol.zh.md`**，不再单独列 `.agents` 副本。
+**symlink 说明（review 修订）**：`docs/protocol.md` 是指向 `skills/parklet/references/protocol.md` 的**符号链接**（symbolic link，二者是同一文件）；`.agents/skills/parklet` → `../../skills/parklet`（目录 symlink）。**只需改一处主文件 `skills/parklet/references/protocol.md`（= docs/protocol.md）+ 中文版 `protocol.zh.md`**，不再单独列 `.agents` 副本。
 
 **对外主文档**
 
-- `skills/parkinglot/references/protocol.md`（= `docs/protocol.md`，symlink 同一文件）：移除 HITL 章节；更新 extract/screenshot/press；补事件与错误码
-- `skills/parkinglot/references/protocol.zh.md`：同步中文协议（HITL、extract 旧语义）
-- `skills/parkinglot/SKILL.md`：移除 ask 模式指导 + `plt approve/deny`（`:32`）与 `PENDING_APPROVAL`（`:53`）指引
+- `skills/parklet/references/protocol.md`（= `docs/protocol.md`，symlink 同一文件）：移除 HITL 章节；更新 extract/screenshot/press；补事件与错误码
+- `skills/parklet/references/protocol.zh.md`：同步中文协议（HITL、extract 旧语义）
+- `skills/parklet/SKILL.md`：移除 ask 模式指导 + `plt approve/deny`（`:32`）与 `PENDING_APPROVAL`（`:53`）指引
 - `README.md`：移除 HITL 特性宣传（`:18` 特性列表、`:27` server role、`:131-133` CLI 表、`:152-160` ask 示例）
 - `AGENTS.md`：server role 移除 HITL（`:11,18,45`）；Current status 更新
 - `packages/extension/package.json` + `packages/server/package.json`：description 移除 HITL
@@ -305,5 +305,5 @@ pnpm typecheck && pnpm test && pnpm lint && pnpm format
 4. **事件缓存范围**：只缓存 `tab.created`/`tab.removed`（避免 `page.navigated` 每次导航都刷"未读"）；未读数附在 HTTP 命令响应的 `result.unreadCount`。
 5. **structured 单 root 语义**：`selector` 只匹配一个元素时，第一层列表取其子元素（按参数语义章节），故返回的是该元素子树的 `DomNode[]`。
 6. **E2E**：HITL 用例与 helpers 已删除；`pnpm test:e2e` 已跑通（9 passed，含截图像素断言与 SW 保活）。本期未新增 E2E 用例覆盖 extract/press/tab 回退等新特性（已有单测覆盖）。
-7. **后续文档调整（2026-09-14）**：移除 `skills/parkinglot/references/protocol.zh.md`（改为英文单版），并在 `references/` 下新增 `example.md` 作为参考示例；protocol.md/SKILL.md/README.md 同步更新。上文中"同步 protocol.zh.md"的条目已作废。
+7. **后续文档调整（2026-09-14）**：移除 `skills/parklet/references/protocol.zh.md`（改为英文单版），并在 `references/` 下新增 `example.md` 作为参考示例；protocol.md/SKILL.md/README.md 同步更新。上文中"同步 protocol.zh.md"的条目已作废。
 8. **版本约定调整（2026-09-14）**：上文 §"约束"的"PROTOCOL_VERSION（0.1.0）不提升"作废——`PROTOCOL_VERSION` 与 npm 包版本解耦，改为 **`0.1.0-draft`** 表示线协议仍在设计中；各 package（protocol/server/extension）npm 版本统一为 **0.2.0**。`plt --version` 显示包版本 + 协议版本。

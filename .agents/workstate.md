@@ -31,7 +31,7 @@ v3 增量（`docs/v3-incremental-plan.md`）**已全部实现并验证**，工�
 ## 关键约束 / 事实
 
 - `eval` 必须在 **MAIN world**（`chrome.scripting.executeScript`，自包含注入函数）；隔离世界 `new Function` 被扩展 CSP 禁止；MAIN world 仍受**页面 CSP** 限制，严格 CSP 站点会失败
-- eval 默认禁用，`PARKINGLOT_ENABLE_EVAL=1` 放行；`PARKINGLOT_DISABLED_COMMANDS` 显式含 `eval` 优先
+- eval 默认禁用，`PARKLET_ENABLE_EVAL=1` 放行；`PARKLET_DISABLED_COMMANDS` 显式含 `eval` 优先
 - `links` 按绝对 href 分组、`forms` 按 form 分组；`forms` 分页为**字段级**；两者 `visibleOnly` 默认 true、采集上限 `MAX_ITEMS=2000` + `truncated`
 - `forms` 的 `input[type=password].value` 固定 `'********'`
 - PROTOCOL_VERSION 0.1.0-draft（additive 未升）；`eval` 参数由 `expression` 改名 `script` 属 breaking（预发布可接受）

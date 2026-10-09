@@ -1,1 +1,1 @@
-../skills/parkinglot/references/protocol.md
+../skills/parklet/references/protocol.md

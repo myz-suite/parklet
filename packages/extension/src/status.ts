@@ -67,6 +67,6 @@ export function guidanceFor(state: ConnState, info: StatusInfo): string {
     case 'disconnected':
       return info.lastError?.includes('server shutting down')
         ? '服务端已停止；重新运行 `plt serve` 后点 Retry。'
-        : '连接失败：确认 parkinglot-server 已启动（`plt serve`）且地址可访问，然后点 Retry。';
+        : '连接失败：确认 parklet-server 已启动（`plt serve`）且地址可访问，然后点 Retry。';
   }
 }

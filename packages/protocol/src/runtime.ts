@@ -5,7 +5,7 @@
 export { PROTOCOL_NAME, PROTOCOL_VERSION, protocolName } from './constants.js';
 export {
   ERROR_CODES,
-  ParkinglotError,
+  ParkletError,
   isErrorCode,
   type ErrorCode,
   type ProtocolErrorData,

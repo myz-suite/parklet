@@ -34,7 +34,7 @@
 暂不处理，作为独立计划后续设计：
 
 - HTTP API 无鉴权且不校验 `Origin`/`Host`：本机进程可直接驱动浏览器；用户访问的网站可能借 localhost 盲发命令（CSRF 驱动）。计划加 `Authorization: Bearer <token>` 与来源校验，或改用 Unix socket。
-- `PARKINGLOT_BIND` 可改为非回环且无守卫：存在把无鉴权 API 暴露到网络的风险。
+- `PARKLET_BIND` 可改为非回环且无守卫：存在把无鉴权 API 暴露到网络的风险。
 - token 直接打印到 stdout，可能进入终端日志 / shell 历史。
 - eval 默认禁用，但一旦开启，配合无鉴权 API 存在数据外发风险。
 - 待验证：Chrome Private Network Access 是否足以拦截来自公网页面对 `127.0.0.1` 的请求。

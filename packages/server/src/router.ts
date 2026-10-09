@@ -1,5 +1,5 @@
 import {
-  ParkinglotError,
+  ParkletError,
   PROTOCOL_VERSION,
   requestSchema,
   validateParams,
@@ -8,7 +8,7 @@ import {
   type ProtocolError,
   type Request,
   type Response,
-} from '@parkinglot/protocol';
+} from '@parklet/protocol';
 import type { ServerConfig } from './config.js';
 import { isHostAllowed } from './config.js';
 import type { Ledger } from './ledger.js';
@@ -146,7 +146,7 @@ export class Router {
         });
         return this.error(
           'HOST_NOT_ALLOWED',
-          `host '${host}' is not in PARKINGLOT_ALLOWED_HOSTS`,
+          `host '${host}' is not in PARKLET_ALLOWED_HOSTS`,
           req.id,
         );
       }
@@ -270,4 +270,4 @@ export class Router {
   }
 }
 
-export { ParkinglotError };
+export { ParkletError };

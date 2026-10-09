@@ -31,6 +31,12 @@
       "skillPath": "drafting/skills/deep-research/SKILL.md",
       "computedHash": "672df627474f1130217f7601cdf557d48562258cf9b4c3e29f19597b70adefba"
     },
+    "design-system": {
+      "source": "kimmywork/skills",
+      "sourceType": "github",
+      "skillPath": "drafting/skills/design-system/SKILL.md",
+      "computedHash": "9c75c27846d6726e4ab0bd60dda9399bd0f8fd67853f8eaa5565c355cf053f30"
+    },
     "distillation": {
       "source": "kimmywork/skills",
       "sourceType": "github",

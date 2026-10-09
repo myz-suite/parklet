@@ -1,4 +1,4 @@
-import type { EventMessage } from '@parkinglot/protocol';
+import type { EventMessage } from '@parklet/protocol';
 
 export interface CachedEvent {
   event: string;
