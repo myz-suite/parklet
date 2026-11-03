@@ -39,10 +39,8 @@ describe('method metadata', () => {
     expect(byAccess('never')).toEqual([
       'dom-query',
       'extract',
-      'forms',
       'get-page-info',
       'get-status',
-      'links',
       'list-tabs',
       'ping',
       'screenshot',

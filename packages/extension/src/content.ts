@@ -29,12 +29,16 @@ chrome.runtime.onMessage.addListener((msg: ContentCommand, _sender, sendResponse
         : await executeDomAction(msg.method, msg.params, document, msg.tabId, msg.navId);
       reply = { type: 'pl:result', id: msg.id, ok: true, result };
     } catch (err) {
-      const e = err as Error & { code?: string };
+      const e = err as Error & { code?: string; data?: Record<string, unknown> };
       reply = {
         type: 'pl:result',
         id: msg.id,
         ok: false,
-        error: { code: e.code ?? 'INTERNAL', message: e.message },
+        error: {
+          code: e.code ?? 'INTERNAL',
+          message: e.message,
+          ...(e.data !== undefined ? { data: e.data } : {}),
+        },
       };
     }
     sendResponse(reply);

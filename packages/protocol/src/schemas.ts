@@ -53,7 +53,13 @@ export const paramsSchemas = {
   reload: noopSchema,
   // 交互
   click: z.object({ selector: z.string().min(1) }),
-  'click-text': z.object({ text: z.string().min(1) }),
+  'click-text': z.object({
+    text: z.string().min(1),
+    within: z.string().min(1).optional(),
+    role: z.string().min(1).optional(),
+    exact: z.boolean().optional(),
+    nth: z.number().int().nonnegative().optional(),
+  }),
   fill: z.object({ selector: z.string().min(1), value: z.string() }),
   type: z.object({ selector: z.string().min(1), text: z.string() }),
   press: z.object({ selector: z.string().min(1).optional(), key: z.string().min(1) }),
@@ -78,27 +84,51 @@ export const paramsSchemas = {
   // 滚动 / 视图
   scroll: z
     .object({
-      direction: z.enum(['up', 'down', 'top', 'bottom']).optional(),
-      amount: z.number().optional(),
+      by: z
+        .number()
+        .finite()
+        .refine((n) => n !== 0, { message: 'scroll --by 不能为 0' })
+        .optional(),
+      to: z.enum(['top', 'bottom']).optional(),
       selector: z.string().min(1).optional(),
+      smooth: z.boolean().optional(),
+      settle: z.boolean().optional(),
+      focus: z.boolean().optional(),
+      allowNoop: z.boolean().optional(),
     })
-    .refine(
-      (p) => p.direction !== undefined || p.amount !== undefined || p.selector !== undefined,
-      {
-        message: 'scroll 需要提供 direction / amount / selector（至少其一）',
-      },
-    ),
+    .refine((p) => p.by !== undefined || p.to !== undefined, {
+      message: 'scroll 需要提供 --by 或 --to',
+    })
+    .refine((p) => !(p.by !== undefined && p.to !== undefined), {
+      message: 'scroll 的 --by 与 --to 互斥',
+    }),
   screenshot: z.object({
     format: z.enum(['png', 'jpeg']).optional(),
-    fullPage: z.boolean().optional(),
     selector: z.string().min(1).optional(),
+    restoreFocus: z.boolean().optional(),
     path: z.string().optional(),
   }),
-  'scroll-to': z.object({ selector: z.string().min(1) }),
+  'scroll-to': z.object({
+    selector: z.string().min(1),
+    smooth: z.boolean().optional(),
+    settle: z.boolean().optional(),
+    focus: z.boolean().optional(),
+  }),
   // 提取
   extract: z
     .object({
-      mode: z.enum(['text', 'structured', 'html']).optional(),
+      mode: z.enum(['text', 'structured', 'html', 'links', 'forms']).optional(),
+      fields: z
+        .array(
+          z.object({
+            name: z.string().min(1),
+            selector: z.string().min(1),
+            alternatives: z.array(z.string().min(1)).optional(),
+            attr: z.string().min(1).optional(),
+          }),
+        )
+        .min(1)
+        .optional(),
       article: z.boolean().optional(),
       selector: z.string().min(1).optional(),
       offset: z.number().int().nonnegative().optional(),
@@ -110,8 +140,14 @@ export const paramsSchemas = {
     })
     .refine((p) => !(p.article === true && p.mode !== undefined), {
       message: 'extract 的 article 与 mode 互斥（article=true 时不可同时提供 mode）',
+    })
+    .refine((p) => p.fields === undefined || p.selector !== undefined, {
+      message: 'extract --fields 需要配合 --selector（行选择器）',
+    })
+    .refine((p) => !(p.fields !== undefined && (p.mode !== undefined || p.article === true)), {
+      message: 'extract 的 fields 与 mode/article 互斥',
     }),
-  'get-page-info': noopSchema,
+  'get-page-info': z.object({ selector: z.string().min(1).optional() }),
   'dom-query': z
     .object({
       selector: z.string().min(1).optional(),
@@ -121,18 +157,6 @@ export const paramsSchemas = {
     .refine((p) => p.selector !== undefined || p.text !== undefined, {
       message: 'dom-query 需要提供 selector 或 text（至少其一）',
     }),
-  links: z.object({
-    selector: z.string().min(1).optional(),
-    offset: z.number().int().nonnegative().optional(),
-    limit: z.number().int().positive().optional(),
-    visibleOnly: z.boolean().optional(),
-  }),
-  forms: z.object({
-    selector: z.string().min(1).optional(),
-    offset: z.number().int().nonnegative().optional(),
-    limit: z.number().int().positive().optional(),
-    visibleOnly: z.boolean().optional(),
-  }),
   // 页面内网络
   fetch: z.object({
     url: httpUrlSchema,
@@ -156,10 +180,18 @@ export const paramsSchemas = {
     .object({
       ms: z.number().nonnegative().optional(),
       selector: z.string().min(1).optional(),
-      condition: z.enum(['networkidle', 'load']).optional(),
+      count: z.number().int().positive().optional(),
+      stableMs: z.number().int().nonnegative().optional(),
+      condition: z.enum(['networkidle', 'load', 'content']).optional(),
     })
     .refine((p) => p.ms !== undefined || p.selector !== undefined || p.condition !== undefined, {
       message: 'wait 需要提供 ms / selector / condition（至少其一）',
+    })
+    .refine((p) => !(p.selector !== undefined && p.condition !== undefined), {
+      message: 'wait 的 selector 与 condition 互斥',
+    })
+    .refine((p) => p.count === undefined || p.selector !== undefined, {
+      message: 'wait --count 需要配合 --selector',
     }),
   // 会话
   ping: noopSchema,

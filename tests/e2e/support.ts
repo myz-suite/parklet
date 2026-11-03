@@ -159,6 +159,122 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
       send('<html><body><h1>target-page</h1></body></html>');
       return;
     }
+    // iframe 夹具：/frame-host?cross=<另一个 origin> 同时挂同源与跨域 frame。
+    if (url.pathname === '/frame-host') {
+      const crossBase = url.searchParams.get('cross') ?? '';
+      const crossSrc =
+        crossBase.length > 0 ? `${crossBase}/frame-child?name=cross` : '/frame-child?name=cross';
+      send(
+        '<!doctype html><html><body><h1>frame-host</h1>' +
+          '<iframe id="same" src="/frame-child?name=same"></iframe>' +
+          `<iframe id="cross" src="${crossSrc}"></iframe>` +
+          '</body></html>',
+      );
+      return;
+    }
+    if (url.pathname === '/frame-child') {
+      const name = url.searchParams.get('name') ?? 'child';
+      send(`<!doctype html><html><body>
+<h1 id="frame-title">frame child ${name}</h1>
+<button id="frame-btn">Frame Button</button>
+<input id="frame-input" placeholder="frame input">
+<a href="/target-page">Frame Link</a>
+</body></html>`);
+      return;
+    }
+    // Shadow DOM 夹具：open root（可操作）与 closed root（应不可见）。
+    if (url.pathname === '/shadow') {
+      send(`<!doctype html><html><body>
+<h1>shadow page</h1>
+<my-card></my-card>
+<closed-card></closed-card>
+<script>
+class MyCard extends HTMLElement {
+  constructor() {
+    super();
+    const root = this.attachShadow({ mode: 'open' });
+    root.innerHTML = '<div class="card"><h2>Shadow Title</h2><p class="body">Shadow body text</p><button id="shadow-btn">Shadow Action</button><input id="shadow-input" placeholder="shadow input"><a href="/target-page">Shadow Link</a></div>';
+  }
+}
+customElements.define('my-card', MyCard);
+class ClosedCard extends HTMLElement {
+  constructor() {
+    super();
+    const root = this.attachShadow({ mode: 'closed' });
+    root.innerHTML = '<p>Closed body text</p>';
+  }
+}
+customElements.define('closed-card', ClosedCard);
+</script>
+</body></html>`);
+      return;
+    }
+    // 原生对话框夹具：用于验证“停滞提示 + 用户处理”，不做自动应答。
+    if (url.pathname === '/dialogs') {
+      send(`<!doctype html><html><body>
+<h1>dialogs</h1>
+<button id="alert-btn">Alert</button>
+<button id="confirm-btn">Confirm</button>
+<button id="prompt-btn">Prompt</button>
+<p id="result">idle</p>
+<script>
+document.getElementById('alert-btn').addEventListener('click', function () {
+  alert('hello alert');
+});
+document.getElementById('confirm-btn').addEventListener('click', function () {
+  document.getElementById('result').textContent = 'confirm:' + confirm('continue?');
+});
+document.getElementById('prompt-btn').addEventListener('click', function () {
+  document.getElementById('result').textContent = 'prompt:' + String(prompt('name?', 'default'));
+});
+</script>
+</body></html>`);
+      return;
+    }
+    // 文件上传夹具：把选中的文件内容回显到 #out。
+    if (url.pathname === '/upload') {
+      send(`<!doctype html><html><body>
+<h1>upload</h1>
+<input id="file" type="file" multiple>
+<pre id="out"></pre>
+<script>
+document.getElementById('file').addEventListener('change', async function () {
+  const out = document.getElementById('out');
+  const files = Array.from(this.files || []);
+  const texts = [];
+  for (const f of files) texts.push(f.name + ':' + await f.text());
+  out.textContent = texts.join('|');
+});
+</script>
+</body></html>`);
+      return;
+    }
+    // 下载夹具：浏览器下载事件与 wait --condition download 用。
+    if (url.pathname === '/download') {
+      res.writeHead(200, {
+        'content-type': 'text/plain; charset=utf-8',
+        'content-disposition': 'attachment; filename="fixture.txt"',
+      });
+      res.end('download fixture\n');
+      return;
+    }
+    // 网络夹具：点击后发起 500ms 延迟请求，供 networkidle / requests 测试。
+    if (url.pathname === '/network') {
+      send(`<!doctype html><html><body>
+<h1>network</h1>
+<button id="slow">Slow request</button>
+<p id="status">idle</p>
+<script>
+document.getElementById('slow').addEventListener('click', async function () {
+  const status = document.getElementById('status');
+  status.textContent = 'loading';
+  const res = await fetch('/api/slow?ms=500');
+  status.textContent = 'done:' + await res.text();
+});
+</script>
+</body></html>`);
+      return;
+    }
     if (url.pathname === '/form') {
       send(
         '<html><body><h1>login-form</h1>' +
@@ -200,6 +316,12 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
         }),
         'application/json',
       );
+      return;
+    }
+    if (url.pathname === '/api/slow') {
+      const raw = Number(url.searchParams.get('ms') ?? '500');
+      const ms = Number.isFinite(raw) ? Math.max(0, raw) : 500;
+      setTimeout(() => send('ok', 'text/plain; charset=utf-8'), ms);
       return;
     }
     if (url.pathname === '/tall') {
@@ -284,6 +406,95 @@ export async function startTestWeb(): Promise<{ url: string; stop: () => void }>
   }
   add(10);
   document.getElementById('list').addEventListener('scroll', () => add(10));
+</script>
+</body></html>`);
+      return;
+    }
+    // SPA：延迟渲染 N 个 article；用于 wait --count/--stable/--condition content。
+    if (url.pathname === '/spa') {
+      send(`<!doctype html><html><body>
+<h1>spa</h1>
+<div id="app">loading</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const n = Number(params.get('n') || '10');
+  const delay = Number(params.get('delay') || '300');
+  setTimeout(function () {
+    const app = document.getElementById('app');
+    app.innerHTML = Array.from({ length: n }, function (_, i) {
+      return '<article data-id="' + i + '">item ' + i + '</article>';
+    }).join('');
+  }, delay);
+</script>
+</body></html>`);
+      return;
+    }
+    // 虚拟列表：只渲染视口附近的 ~10 条；用于 collect / repeat / 去重。
+    if (url.pathname === '/feed') {
+      send(`<!doctype html><html><body>
+<h1>feed</h1>
+<div id="feed" style="position:relative"></div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const N = Number(params.get('n') || '200');
+  const H = 100;
+  const DUP = params.get('dup') === '1';
+  const feed = document.getElementById('feed');
+  feed.style.height = (N * H) + 'px';
+  const win = document.createElement('div');
+  win.id = 'window';
+  win.style.position = 'absolute';
+  win.style.left = '0';
+  win.style.right = '0';
+  feed.appendChild(win);
+  function render() {
+    const start = Math.max(0, Math.floor(window.scrollY / H) - 1);
+    const end = Math.min(N, start + 10);
+    win.style.top = (start * H) + 'px';
+    win.replaceChildren();
+    for (let i = start; i < end; i += 1) {
+      const a = document.createElement('article');
+      a.dataset.testid = 'tweet';
+      a.dataset.id = String(i);
+      const d = new Date(Date.now() - i * 60000).toISOString();
+      a.innerHTML = '<span class="author">user' + (i % 3) + '</span>' +
+        '<time datetime="' + d + '">' + i + 'm</time>' +
+        '<p class="text">tweet text ' + i + '</p>';
+      win.appendChild(a);
+      if (DUP) win.appendChild(a.cloneNode(true));
+    }
+  }
+  window.addEventListener('scroll', render);
+  render();
+</script>
+</body></html>`);
+      return;
+    }
+    // links/forms 作用域：tablist 内链接与推文图片链接分离。
+    if (url.pathname === '/scope') {
+      send(`<!doctype html><html><body>
+<div role="tablist">
+  <a href="/tab-1">Tab One</a>
+  <a href="/tab-2">Tab Two</a>
+</div>
+<article>
+  <a href="/photo-1">photo</a>
+</article>
+</body></html>`);
+      return;
+    }
+    // click-text：正文同名字符串 + 唯一按钮；用于可点击性判定回归。
+    if (url.pathname === '/mixed-text') {
+      send(`<!doctype html><html><body>
+<h1>mixed text</h1>
+<button id="follow">Following</button>
+<p>Following this thread is useful</p>
+<p>Following</p>
+<div id="result">idle</div>
+<script>
+document.getElementById('follow').addEventListener('click', function () {
+  document.getElementById('result').textContent = 'clicked';
+});
 </script>
 </body></html>`);
       return;

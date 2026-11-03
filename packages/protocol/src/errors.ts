@@ -15,6 +15,7 @@ export const ERROR_CODES = [
   'TAB_CLOSED',
   // 执行层
   'TIMEOUT',
+  'NO_EFFECT',
   'TARGET_NOT_FOUND',
   'TARGET_AMBIGUOUS',
   'TAB_NOT_ACTIVE',

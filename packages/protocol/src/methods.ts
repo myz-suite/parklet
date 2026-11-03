@@ -1,6 +1,7 @@
 import type {
   DomNode,
   DomQueryMatch,
+  ElementBox,
   ElementInfo,
   FormInfo,
   LinkInfo,
@@ -38,8 +39,6 @@ export const METHODS = [
   'extract',
   'get-page-info',
   'dom-query',
-  'links',
-  'forms',
   // 页面内网络
   'fetch',
   'search',
@@ -95,18 +94,22 @@ export const METHOD_META: Record<Method, MethodMeta> = {
     summary: '按 selector 或可见文本选中页面文字并返回文本',
   },
   // 滚动 / 视图
-  scroll: { writeAccess: 'always', summary: '滚动页面或元素（--selector 滚动元素内部）' },
+  scroll: {
+    writeAccess: 'always',
+    summary: '滚动页面或元素（--by/--to；--selector 滚动元素内部）',
+  },
   'scroll-to': { writeAccess: 'always', summary: '滚动页面使元素进入视口' },
   screenshot: { writeAccess: 'never', summary: '截图（viewport、整页或指定元素）' },
   // 提取
-  extract: { writeAccess: 'never', summary: '提取页面文本 / DOM 树 / 文章正文' },
+  extract: {
+    writeAccess: 'never',
+    summary: '提取页面文本 / DOM 树 / 文章正文 / 字段 / 链接 / 表单',
+  },
   'get-page-info': { writeAccess: 'never', summary: '获取页面 URL/标题/视口/滚动位置' },
   'dom-query': {
     writeAccess: 'never',
     summary: '按 CSS 或可见文本查询元素并返回概要（探索用）',
   },
-  links: { writeAccess: 'never', summary: '枚举页面可见链接（按 href 分组）' },
-  forms: { writeAccess: 'never', summary: '枚举页面可见表单字段（按 form 分组）' },
   // 页面内网络
   fetch: { writeAccess: 'conditional', summary: '在页面上下文发起网络请求（带登录态）' },
   search: { writeAccess: 'never', summary: '用搜索引擎查询并返回结果列表' },
@@ -141,6 +144,14 @@ export interface ClickParams {
 
 export interface ClickTextParams {
   text: string;
+  /** 限定作用域 */
+  within?: string;
+  /** 显式/隐式角色过滤（button/link/tab/...） */
+  role?: string;
+  /** 文本精确匹配（空白归一化后） */
+  exact?: boolean;
+  /** 候选（DOM 顺序）中的第 n 个，0-based */
+  nth?: number;
 }
 
 export interface FillParams {
@@ -176,29 +187,88 @@ export interface SelectionParams {
 }
 
 export interface ScrollParams {
-  /** direction 与 amount 二选一；提供 selector 则滚动该元素 */
-  direction?: 'up' | 'down' | 'top' | 'bottom';
-  amount?: number;
+  /** 滚动像素（正数向下，负数向上）；与 to 互斥，二选一必填 */
+  by?: number;
+  /** 跳到顶部/底部；与 by 互斥 */
+  to?: 'top' | 'bottom';
+  /** 提供则滚动该元素内部（overflow 容器），而不是页面 */
   selector?: string;
+  /** 使用平滑滚动；默认 auto */
+  smooth?: boolean;
+  /** 等待滚动位置稳定；默认 true */
+  settle?: boolean;
+  /** 滚动前激活目标 tab（激活即 current） */
+  focus?: boolean;
+  /** 允许 delta=0；默认报 NO_EFFECT */
+  allowNoop?: boolean;
 }
 
 export interface ScrollToParams {
   /** 滚动页面使该元素进入视口 */
   selector: string;
+  smooth?: boolean;
+  settle?: boolean;
+  focus?: boolean;
+}
+
+export interface ScrollPosition {
+  x: number;
+  y: number;
+}
+
+export interface ScrollMetrics {
+  scrollTop: number;
+  scrollLeft: number;
+  scrollHeight: number;
+  scrollWidth: number;
+  clientHeight: number;
+  clientWidth: number;
+}
+
+/** scroll / scroll-to 的可验证结果：前后位置、真实增量、边界与可见性。 */
+export interface ScrollResult {
+  target: 'page' | { selector: string };
+  before: ScrollPosition;
+  after: ScrollPosition;
+  delta: ScrollPosition;
+  atTop: boolean;
+  atBottom: boolean;
+  settled: boolean;
+  visibilityState: 'visible' | 'hidden';
+  viewport: Viewport;
+  warning?: 'BACKGROUND_TAB';
+  metrics?: ScrollMetrics;
+}
+
+export interface ScrollToResult extends ScrollResult {
+  element: ElementInfo;
 }
 
 export interface ScreenshotParams {
   format?: 'png' | 'jpeg';
-  fullPage?: boolean;
-  /** 元素截图：CSS 选择器（非 active tab 报 TAB_NOT_ACTIVE） */
+  /** 元素截图：CSS 选择器；background 会自动激活目标 tab */
   selector?: string;
+  /** 元素截图后恢复原来的 active tab */
+  restoreFocus?: boolean;
   /** 由 CLI 侧解析后写入的本地路径（协议不负责写文件） */
   path?: string;
 }
 
+export interface FieldSpec {
+  name: string;
+  /** 行内字段选择器；优先使用 */
+  selector: string;
+  /** selector 未命中时按顺序尝试的备选选择器 */
+  alternatives?: string[];
+  /** 属性名；缺省或 `text` 表示取文本 */
+  attr?: string;
+}
+
 export interface ExtractParams {
-  /** text：整页/分段文本；structured：DOM 树；html：按 selector 取 outerHTML。默认 text。 */
-  mode?: 'text' | 'structured' | 'html';
+  /** text：整页/分段文本；structured：DOM 树；html：outerHTML；links/forms：链接/表单。默认 text。 */
+  mode?: 'text' | 'structured' | 'html' | 'links' | 'forms';
+  /** 结构化字段抽取（按行输出记录）；与 mode/article 互斥，需要 selector */
+  fields?: FieldSpec[];
   /** article 模式（defuddle 正文提取）；与 mode 互斥；selector 同时提供时作为 contentSelector */
   article?: boolean;
   /** 提供 → 按 CSS 匹配；缺省 → 整页（text）/ body（structured）/ 自动检测（article） */
@@ -217,32 +287,38 @@ export interface ExtractParams {
   exclude?: string;
 }
 
+export interface PageInfoParams {
+  /** 可选：返回该 selector 的匹配数与首个元素 box */
+  selector?: string;
+}
+
+export interface PageInfoResult {
+  url: string;
+  title: string;
+  viewport: Viewport;
+  scrollY: number;
+  readyState: string;
+  visibilityState: 'visible' | 'hidden';
+  activeElement?: { tag: string; id?: string; role?: string };
+  selection: string;
+  scroll: {
+    x: number;
+    y: number;
+    scrollWidth: number;
+    scrollHeight: number;
+    clientWidth: number;
+    clientHeight: number;
+  };
+  /** 仅在 params.selector 提供时出现 */
+  selector?: { count: number; box?: ElementBox };
+}
+
 export interface DomQueryParams {
   /** selector 或可见文本 text 至少提供其一 */
   selector?: string;
   text?: string;
   /** 最多返回多少条（default 20） */
   limit?: number;
-}
-
-export interface LinksParams {
-  /** 作用域，缺省整页 */
-  selector?: string;
-  /** 分页单位 = href 分组 */
-  offset?: number;
-  limit?: number;
-  /** 默认 true */
-  visibleOnly?: boolean;
-}
-
-export interface FormsParams {
-  /** 作用域，缺省整页 */
-  selector?: string;
-  /** 分页单位 = 字段（跨分组扁平计数） */
-  offset?: number;
-  limit?: number;
-  /** 默认 true */
-  visibleOnly?: boolean;
 }
 
 export interface FetchParams {
@@ -276,7 +352,17 @@ export interface WaitParams {
   /** ms / selector / condition 至少提供其一 */
   ms?: number;
   selector?: string;
-  condition?: 'networkidle' | 'load';
+  /** 等待匹配数量至少 N（默认 1） */
+  count?: number;
+  /** 数量在 N ms 内不变才算稳定 */
+  stableMs?: number;
+  condition?: 'networkidle' | 'load' | 'content';
+}
+
+export interface WaitResult {
+  matched?: number;
+  waitedMs: number;
+  stable: boolean;
 }
 
 export interface EvalParams {
@@ -305,10 +391,8 @@ export interface ParamsMap {
   screenshot: ScreenshotParams;
   // 提取
   extract: ExtractParams;
-  'get-page-info': NoopParams;
+  'get-page-info': PageInfoParams;
   'dom-query': DomQueryParams;
-  links: LinksParams;
-  forms: FormsParams;
   // 页面内网络
   fetch: FetchParams;
   search: SearchParams;
@@ -364,6 +448,22 @@ export interface FormsResult {
  * - `mode:'article'`：defuddle 正文（由 params.article=true 触发，与 params.mode 无关）
  */
 export type ExtractResult =
+  | {
+      mode: 'links';
+      links: LinkInfo[];
+      total: number;
+      offset?: number;
+      limit?: number;
+      truncated?: boolean;
+    }
+  | {
+      mode: 'forms';
+      forms: FormInfo[];
+      total: number;
+      offset?: number;
+      limit?: number;
+      truncated?: boolean;
+    }
   | { mode: 'text'; snapshot: PageSnapshot }
   | { mode: 'text'; texts: string[]; total: number; offset?: number; limit?: number }
   | {
@@ -379,6 +479,14 @@ export type ExtractResult =
       mode: 'html';
       /** 每个匹配元素的 outerHTML（第一层列表；无文本截断） */
       items: string[];
+      total: number;
+      offset?: number;
+      limit?: number;
+    }
+  | {
+      mode: 'fields';
+      /** 每行一条记录；缺失字段为 null */
+      items: Array<Record<string, string | null>>;
       total: number;
       offset?: number;
       limit?: number;
@@ -413,15 +521,13 @@ export interface ResultMap {
   select: ElementActionResult;
   selection: { text: string };
   // 滚动 / 视图
-  scroll: { viewport: Viewport };
-  'scroll-to': ElementActionResult;
+  scroll: ScrollResult;
+  'scroll-to': ScrollToResult;
   screenshot: { data?: string; path?: string };
   // 提取
   extract: ExtractResult;
-  'get-page-info': { url: string; title: string; viewport: Viewport; scrollY: number };
+  'get-page-info': PageInfoResult;
   'dom-query': { matches: DomQueryMatch[]; total: number };
-  links: LinksResult;
-  forms: FormsResult;
   // 页面内网络
   fetch: {
     status: number;
@@ -436,12 +542,13 @@ export interface ResultMap {
   'close-tab': Record<string, never>;
   'activate-tab': { tab: TabInfo };
   // 等待
-  wait: Record<string, never>;
+  wait: WaitResult;
   // 会话
   ping: { pong: 'pong'; protocolVersion: string; extensionConnected: boolean };
   'get-status': {
     extensionConnected: boolean;
     currentTabId?: number;
+    latestTabId?: number;
     config: Record<string, unknown>;
   };
   // 高级

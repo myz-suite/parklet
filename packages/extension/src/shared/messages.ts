@@ -17,7 +17,7 @@ export interface ContentResult {
   id: string;
   ok: boolean;
   result?: unknown;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; data?: Record<string, unknown> };
 }
 
 // popup → SW

@@ -1,5 +1,7 @@
 # TODO
 
+> 已完成：`docs/v5-incremental-plan.md`（时间线抓取可靠性：scroll 契约 / extract --fields / collect --repeat / stdout 分离 / tab / click-text / wait / links&forms 并入 extract / page-info / run 变量 / screenshot 聚焦；旧能力队列见附录 B）。
+
 ## Done
 
 - [x] V2 plan

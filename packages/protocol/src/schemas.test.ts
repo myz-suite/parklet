@@ -64,12 +64,15 @@ describe('validateParams', () => {
     expect(validateParams('select', { selector: '#s', label: 'One' }).success).toBe(true);
   });
 
-  it('requires at least one target for scroll', () => {
+  it('requires --by or --to for scroll, and they are mutually exclusive', () => {
     expect(validateParams('scroll', {}).success).toBe(false);
-    expect(validateParams('scroll', { direction: 'down' }).success).toBe(true);
-    expect(validateParams('scroll', { amount: 300 }).success).toBe(true);
-    expect(validateParams('scroll', { selector: '#main' }).success).toBe(true);
-    expect(validateParams('scroll', { direction: 'sideways' }).success).toBe(false);
+    expect(validateParams('scroll', { selector: '#main' }).success).toBe(false);
+    expect(validateParams('scroll', { by: 300 }).success).toBe(true);
+    expect(validateParams('scroll', { to: 'bottom' }).success).toBe(true);
+    expect(validateParams('scroll', { selector: '#main', by: 300 }).success).toBe(true);
+    expect(validateParams('scroll', { by: 0 }).success).toBe(false);
+    expect(validateParams('scroll', { by: 300, to: 'top' }).success).toBe(false);
+    expect(validateParams('scroll', { to: 'sideways' }).success).toBe(false);
   });
 
   it('requires at least one condition for wait', () => {
@@ -97,6 +100,32 @@ describe('validateParams', () => {
     expect(validateParams('extract', { article: true, mode: 'text' }).success).toBe(false);
     expect(validateParams('extract', { depth: -1 }).success).toBe(false);
     expect(validateParams('extract', { limit: 0 }).success).toBe(false);
+    expect(
+      validateParams('extract', {
+        selector: 'li',
+        fields: [{ name: 'text', selector: 'a' }],
+      }).success,
+    ).toBe(true);
+    expect(validateParams('extract', { fields: [{ name: 'text', selector: 'a' }] }).success).toBe(
+      false,
+    );
+    expect(
+      validateParams('extract', {
+        selector: 'li',
+        mode: 'text',
+        fields: [{ name: 'text', selector: 'a' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('validates wait count/stable/content and rejects selector+condition', () => {
+    expect(validateParams('wait', { selector: 'article', count: 5, stableMs: 500 }).success).toBe(
+      true,
+    );
+    expect(validateParams('wait', { count: 5 }).success).toBe(false);
+    expect(validateParams('wait', { selector: 'article', condition: 'load' }).success).toBe(false);
+    expect(validateParams('wait', { condition: 'content' }).success).toBe(true);
+    expect(validateParams('wait', { condition: 'bogus' }).success).toBe(false);
   });
 
   it('requires a selector for scroll-to', () => {
@@ -130,16 +159,21 @@ describe('validateParams', () => {
     expect(validateParams('selection', { selector: '' }).success).toBe(false);
   });
 
-  it('validates links / forms params (paging is element/field level)', () => {
-    expect(validateParams('links', {}).success).toBe(true);
+  it('validates extract --mode links/forms params (paging is element/field level)', () => {
+    expect(validateParams('extract', { mode: 'links' }).success).toBe(true);
     expect(
-      validateParams('links', { selector: '#nav', offset: 5, limit: 10, visibleOnly: false })
-        .success,
+      validateParams('extract', {
+        mode: 'links',
+        selector: '#nav',
+        offset: 5,
+        limit: 10,
+        visibleOnly: false,
+      }).success,
     ).toBe(true);
-    expect(validateParams('links', { limit: 0 }).success).toBe(false);
-    expect(validateParams('links', { offset: -1 }).success).toBe(false);
-    expect(validateParams('forms', { limit: 10 }).success).toBe(true);
-    expect(validateParams('forms', { limit: 1.5 }).success).toBe(false);
+    expect(validateParams('extract', { mode: 'links', limit: 0 }).success).toBe(false);
+    expect(validateParams('extract', { mode: 'links', offset: -1 }).success).toBe(false);
+    expect(validateParams('extract', { mode: 'forms', limit: 10 }).success).toBe(true);
+    expect(validateParams('extract', { mode: 'forms', limit: 1.5 }).success).toBe(false);
   });
 
   it('requires a non-empty script for eval', () => {

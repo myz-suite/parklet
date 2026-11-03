@@ -54,8 +54,8 @@ plt extract --mode structured --selector "article ul" --limit 10
 # [{"tag":"li","attrs":{},"children":[{"tag":"a","attrs":{"href":"/item/1","title":"First item"},"children":[],"text":"First item"}]}, ...]
 # [showing 10 of 25, limit=10]
 
-plt extract --mode structured --selector "article ul" --offset 10 --limit 10 --prettify
-# …pretty-printed JSON…
+plt extract --mode structured --selector "article ul" --offset 10 --limit 10
+# …JSON…
 # [showing 10 of 25, offset=10, limit=10]
 ```
 
@@ -87,35 +87,53 @@ plt extract --article
 `--article` returns **Markdown**; an optional `--selector` restricts extraction to that
 element. Metadata is emitted as YAML frontmatter.
 
-## Links & forms
+## Links & forms (extract modes)
 
 Explore the interactive surface of a page (visible elements only by default):
 
 ```bash
-plt links
+plt extract --mode links
 # - Docs -> https://example.com/docs
 # - Home | Dashboard -> https://example.com/ (x2)
 # [showing 12 of 12]
 
-plt links --selector "#nav" --limit 5   # scope + paging (pagination is by href group)
+plt extract --mode links --selector "#nav" --limit 5   # scope + paging (pagination is by href group)
 
-plt forms
+plt extract --mode forms
 # form 1: /login [POST]
 #   - <input type=text> Username name=user
 #   - <input type=password> Password name=pass value="********"
 #   - <button type=submit> Sign in
 # [showing 3 of 3]
 
-plt forms --all                          # include invisible fields
+plt extract --mode forms --all                          # include invisible fields
 ```
 
-- `links` groups anchors by absolute `href` (`texts[]` + `count`); `javascript:`/empty/`#`
+- `--mode links` groups anchors by absolute `href` (`texts[]` + `count`); `javascript:`/empty/`#`
   anchors are dropped. `total` = number of href groups.
-- `forms` groups controls by form `action`/`method`/`target` (a form-less group has no
+- `--mode forms` groups controls by form `action`/`method`/`target` (a form-less group has no
   `action`) and reports `name`/`type`/`value`/`labels` plus `checked`/`selected`/`disabled`/
   `required`. Password values are masked. `total` = number of fields, and paging
   (`--limit`/`--offset`) slices fields flat across groups.
 - Both cap collection (`truncated: true` when the cap is hit) before paging.
+
+## Structured fields & collect
+
+```bash
+plt extract --selector "article[data-testid='tweet']" \
+  --fields "author=[data-testid='User-Name'] span,datetime=time@datetime,text=[data-testid='tweetText']" \
+  --json
+
+plt collect "article[data-testid='tweet']" \
+  --fields "id=article@data-id,author=.author,datetime=time@datetime,text=.text" \
+  --repeat 10 --scroll-by 800 --dedupe-key author,text --json
+```
+
+- `--fields` returns `{ mode:'fields', items, total }`; missing fields are `null`.
+- `@href`/`@src` resolve to absolute URLs.
+- `collect --repeat` is required (≥ 1); output includes `steps`, `duplicates`,
+  `zeroNewSteps`, `stoppedReason` and an informational `observed` range (not a coverage
+  guarantee).
 
 ## Screenshot
 
@@ -130,9 +148,9 @@ plt screenshot --path hero.png --selector "#hero"   # crop a single element
 - Without `--path`, the file is written to the current directory as
   `screenshot-<timestamp>.<png|jpeg>` (`--format` chooses the suffix) and the absolute path
   is printed.
-- Element screenshots require the target tab to be its window's active tab, otherwise
-  `TAB_NOT_ACTIVE` (`plt tab <id>` first). The element is scrolled (instantly) into view and
-  the visible part is cropped (`devicePixelRatio`/zoom aware; no stitching).
+- Element screenshots auto-activate the target tab; pass `--restore-focus` to switch back.
+  The element is scrolled (instantly) into view and the visible part is cropped
+  (`devicePixelRatio`/zoom aware; no stitching).
 
 ## Interaction
 
@@ -145,8 +163,8 @@ plt click "#submit"
 plt click-text "Sign in"
 plt select "#country" --label "Japan"
 plt hover "#menu"
-plt scroll down
-plt scroll --selector "#sidebar" --amount 200   # scroll inside the element's own overflow
+plt scroll --by 850
+plt scroll --selector "#sidebar" --by 200      # scroll inside the element's own overflow
 plt scroll-to "#results li:last-child"          # bring an element into the page viewport
 ```
 
@@ -205,8 +223,8 @@ plt fetch https://api.github.com/user --header "Accept: application/json"
 plt tabs
 # 7   Example Domain  https://example.com
 # 9*  Another page    https://...
-plt tab 9
-plt tab-new https://example.org
+plt tab 9                       # activate + make it the current tab
+plt tab-new https://example.org # create + activate + make current
 plt tab-close 9
 
 plt events
@@ -222,18 +240,23 @@ Run many commands in one process (one JSON object per line; `-` reads stdin):
 
 ```bash
 cat > flow.jsonl <<'EOF'
-{"method":"goto","params":{"url":"https://example.com"}}
-{"method":"wait","params":{"selector":"h1"}}
-{"method":"extract","params":{"selector":"h1"}}
+{"vars":{"base":"https://example.com"}}
+{"method":"goto","params":{"url":"${base}/list"}}
+{"method":"extract","params":{"selector":"#list li","fields":[{"name":"text","selector":"a"}]},"as":"page"}
+{"method":"wait","params":{"ms":"${page.total}"}}
 EOF
 plt run flow.jsonl              # human output per step
 plt run flow.jsonl --json       # one JSON result per line
 plt run flow.jsonl --fail-fast  # stop at the first error
 ```
 
-Per-line `tabId` overrides the global `--tab`. Exit code is `1` if any step failed (unless `--fail-fast` stops earlier).
+The `vars` prelude applies to every invocation; alternatively pass `--var base=...`. An escaped
+`$${name}` is emitted literally.
 
-Any command with pending `tab.*` events appends a reminder: `🔔 2 new events, run \`plt events\``.
+Per-line `tabId` overrides the global `--tab`. `${name}` is replaced in params; an `as` captures
+that step's `result.data` for later `${as.path}` references. Exit code is `1` if any step failed
+(unless `--fail-fast` stops earlier).
+
 If the current tab is closed, it is cleared and the next command falls back to the most recently
 active tab.
 
@@ -264,13 +287,13 @@ plt extract --selector "#nope"
 # ✖ [TARGET_NOT_FOUND] no element matches '#nope'    (exit 3)
 ```
 
-| Exit | Meaning                                                                                 |
-| ---- | --------------------------------------------------------------------------------------- |
-| 0    | success                                                                                 |
-| 2    | invalid request/params                                                                  |
-| 3    | target error (`TARGET_*`, `TAB_CLOSED`, `TAB_NOT_ACTIVE`, `NOT_SERIALIZABLE`, URL/host) |
-| 4    | extension offline / no tab (`EXTENSION_OFFLINE`, `EXTENSION_NO_TAB`)                    |
-| 6    | timeout                                                                                 |
-| 1    | other                                                                                   |
+| Exit | Meaning                                                                            |
+| ---- | ---------------------------------------------------------------------------------- |
+| 0    | success                                                                            |
+| 2    | invalid request/params                                                             |
+| 3    | target error (`TARGET_*`, `TAB_CLOSED`, `NO_EFFECT`, `NOT_SERIALIZABLE`, URL/host) |
+| 4    | extension offline / no tab (`EXTENSION_OFFLINE`, `EXTENSION_NO_TAB`)               |
+| 6    | timeout                                                                            |
+| 1    | other                                                                              |
 
 Full code list and payload shapes: [`protocol.md`](./protocol.md).

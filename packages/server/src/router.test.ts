@@ -112,6 +112,17 @@ describe('Router — targeting', () => {
     expect(ctx.target.get()).toBe(42);
   });
 
+  it('close-tab honors params.tabId when no current/latest target exists', async () => {
+    ctx.hub.latestTabId = undefined;
+    const res = await ctx.router.handle({
+      id: '1',
+      method: 'close-tab',
+      params: { tabId: 77 },
+    });
+    expect('error' in res).toBe(false);
+    expect(ctx.hub.received[0]?.tabId).toBe(77);
+  });
+
   it('reuses the current target tab for subsequent commands', async () => {
     await ctx.router.handle(valid);
     await ctx.router.handle({ id: '2', method: 'extract', params: {} });

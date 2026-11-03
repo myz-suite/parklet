@@ -24,13 +24,13 @@ The extension's toolbar icon shows a status badge — **green** = connected, **r
 ## 2. Commands (full reference: `references/protocol.md`; worked examples: `references/example.md`)
 
 Navigation/state: `plt status`, `plt ping`, `plt goto <url>`, `plt back`, `plt forward`, `plt reload`
-Interact: `plt click <css>`, `plt click-text <text>`, `plt fill <css> <value>`, `plt type <css> <text>`, `plt press <key|combo>` (e.g. `Control+c`), `plt hover <css>`, `plt select <css> --value <v>`, `plt selection [--selector <css> | --text <text>]` (select text, returns the selected string)
-View: `plt scroll <up|down|top|bottom|amount>`, `plt scroll --selector <css> [--direction d] [--amount n]` (scroll inside an element), `plt scroll-to <css>` (bring element into view), `plt screenshot [--path out.png] [--selector <css>] [--format png|jpeg]`
-Extract: `plt extract [--selector <css>] [--mode text|structured|html] [--article] [--depth N] [--offset N] [--limit N] [--max-chars N] [--exclude <css>] [--visible-only] [--prettify]`, `plt page-info`, `plt dom-query [<css> | --text <s>] [--limit N]` (list matching elements), `plt links [--selector <css>] [--limit N] [--offset N] [--all]` (visible links grouped by href), `plt forms [--selector <css>] [--limit N] [--offset N] [--all]` (visible form fields grouped by form), `plt tabs`, `plt tab <id>`, `plt tab-new <url>`, `plt tab-close`
+Interact: `plt click <css>`, `plt click-text <text> [--within <css>] [--role <role>] [--exact] [--nth <n>]` (only actionable elements), `plt fill <css> <value>`, `plt type <css> <text>`, `plt press <key|combo>` (e.g. `Control+c`), `plt hover <css>`, `plt select <css> --value <v>`, `plt selection [--selector <css> | --text <text>]` (select text, returns the selected string)
+View: `plt scroll --by <px>` / `plt scroll --to top|bottom` (instant + settle by default), `plt scroll --selector <css> --by <px>` (scroll inside an element), `plt scroll-to <css>` (bring element into view), `plt screenshot [--path out.png] [--selector <css>] [--format png|jpeg]`
+Extract: `plt extract [--selector <css>] [--mode text|structured|html|links|forms] [--fields "<spec>"] [--fields-file <json>] [--article] [--depth N] [--offset N] [--limit N] [--max-chars N] [--exclude <css>] [--visible-only|--all]`, `plt page-info [--selector <css>]`, `plt dom-query [<css> | --text <s>] [--limit N]` (list matching elements), `plt tabs`, `plt tab <id>` (activate + make current), `plt tab-new <url>`, `plt tab-close [id]`
 Advanced: `plt eval "<script>" | --file <path> | --stdin` (runs a script in the page; must contain `return`; server must set `PARKLET_ENABLE_EVAL=1`)
 Network in page: `plt fetch <url> [--method POST] [--header "k: v"] [--body ...]`, `plt search <query> [--engine google|duckduckgo] [--page N]` (default engine google; paging via --page)
-Wait: `plt wait [--ms N | --selector css | --condition load]`
-Ops: `plt logs [--follow]`, `plt events [--tail N]` (tab lifecycle events; clears the unread count), `plt run <file.jsonl|->` (batch: one `{method, params?, tabId?}` per line; `--fail-fast`)
+Wait: `plt wait [--ms N | --selector <css> [--count N] [--stable <ms>] | --condition load|networkidle|content]`
+Ops: `plt logs [--follow]`, `plt events [--tail N]` (tab lifecycle events; clears the unread count), `plt run <file.jsonl|->` (batch: one `{method, params?, tabId?, as?}` per line; `--var k=v`, `--fail-fast`), `plt collect <row-selector> --fields ... --repeat N [--scroll-by N] [--json|--jsonl]` (fixed-round extraction + scroll + dedupe)
 
 Global flags: `--server <url>`, `--json`, `--timeout <ms>`, `--tab <id>`.
 
@@ -40,7 +40,9 @@ Notes:
 - `plt extract --article` returns **Markdown** with YAML frontmatter (`title`/`site`/`url`/…); `--selector` becomes the article content selector.
 - `plt extract --mode structured --selector …` returns a DOM tree with `total` + echoed `offset`/`limit` — page with `offset += limit` until `offset + nodes.length >= total`.
 - `plt press` supports Playwright-style keys/combos (`Control+c`, `Meta+s`, `ArrowDown`, `Enter`, …).
-- `plt links` groups anchors by absolute `href` (`texts[]` + `count`); `plt forms` groups fields by form `action`/`method`/`target` and includes `name`/`type`/`value`/`labels`/`checked`/`selected` (passwords are masked as `********`). Both default to visible-only (`--all` to override) and page with `--limit`/`--offset` (`total` is the number of href groups for links, and the number of fields for forms).
+- `plt extract --mode links` groups anchors by absolute `href` (`texts[]` + `count`); `plt extract --mode forms` groups fields by form `action`/`method`/`target` and includes `name`/`type`/`value`/`labels`/`checked`/`selected` (passwords are masked as `********`). Both default to visible-only (`--all` to override) and page with `--limit`/`--offset`.
+- `plt extract --selector "article[data-testid='tweet']" --fields "author=.author,datetime=time@datetime,text=.text"` returns one record per row selector; missing fields are `null`; `@href`/`@src` are absolute.
+- `plt collect` is CLI orchestration over `extract --fields` + `scroll`; `--repeat` is required and must be ≥ 1. It reports `steps`, `duplicates`, `zeroNewSteps`, `stoppedReason` and an informational `observed` time range (not a coverage guarantee).
 - `plt eval` runs the script in the page's **MAIN world** (it can read page globals, but a strict-CSP page can block it); it must `return`, the result must be JSON-serializable (otherwise `NOT_SERIALIZABLE`), and `undefined` yields no value. Disabled by default.
 
 ## 3. Continuity model (IMPORTANT)
@@ -51,16 +53,16 @@ Notes:
 
 ## 4. Standard workflows
 
-Research: `plt search "topic"` → pick a result URL → `plt goto <url>` → `plt extract` → `plt scroll down` → `plt extract` → repeat.
+Research: `plt search "topic"` → pick a result URL → `plt goto <url>` → `plt extract` → `plt scroll --by 850` → `plt extract` → repeat.
 Form fill: `plt goto <login-url>` → `plt fill "#user" alice` → `plt fill "#pass" ***` → `plt click-text "Sign in"` → `plt wait --condition load` → `plt extract` (verify state).
-Screenshot report: `plt goto <url>` → `plt scroll top` → `plt screenshot --path shot.png`.
+Screenshot report: `plt goto <url>` → `plt scroll --to top --allow-noop` → `plt screenshot --path shot.png`.
 Authenticated API: `plt fetch https://api.example.com/me --header "Accept: application/json"` (runs in the page, with cookies).
 
 ## 5. Troubleshooting
 
 - `EXTENSION_OFFLINE`: extension not paired. Check popup (green dot) and that server is running with the same token.
 - `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS`: selector/text not found or ambiguous — use `plt extract` first to learn the page, prefer a more specific CSS selector. `fill`/`type` accept a label/container selector and resolve the input.
-- `TAB_NOT_ACTIVE`: element screenshot (`--selector`) needs the target tab active — `plt tab <id>` first, or omit `--selector`.
+- `TAB_NOT_ACTIVE`: deprecated; element screenshots now auto-activate the target tab (`--restore-focus` switches back).
 - `TIMEOUT`: page slow — retry with `--timeout 60000`.
 - `TAB_CLOSED`: the target tab was closed — run `plt goto <url>` or pass `--tab <id>` to pick a new one; later commands auto-fall back to the most recently active tab.
 

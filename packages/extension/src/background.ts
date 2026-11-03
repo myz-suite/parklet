@@ -40,8 +40,12 @@ let config: { serverUrl: string; token: string } | null = null;
 const navIds = new Map<number, number>();
 const pendingNavigations = new Map<number, Array<() => void>>();
 
-function code(code: ProtocolError['error']['code'], message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code });
+function code(
+  code: ProtocolError['error']['code'],
+  message: string,
+  data?: Record<string, unknown>,
+): Error & { code: string; data?: Record<string, unknown> } {
+  return Object.assign(new Error(message), { code, ...(data !== undefined ? { data } : {}) });
 }
 
 // ---------------------------------------------------------------------------
@@ -309,11 +313,19 @@ interface WireRequest {
 /** chrome.tabs 的"tab 已不存在"错误文案（不同路径措辞略有差异），统一映射为 TAB_CLOSED。 */
 const TAB_GONE_RE = /no tab with id|invalid tab id|no tab with id:|tab was closed/i;
 
-function normalizeError(err: unknown): { code: ProtocolError['error']['code']; message: string } {
-  const e = err as Error & { code?: string };
+function normalizeError(err: unknown): {
+  code: ProtocolError['error']['code'];
+  message: string;
+  data?: Record<string, unknown>;
+} {
+  const e = err as Error & { code?: string; data?: Record<string, unknown> };
   const message = e?.message ?? String(err);
   if (typeof e?.code === 'string') {
-    return { code: e.code as ProtocolError['error']['code'], message };
+    return {
+      code: e.code as ProtocolError['error']['code'],
+      message,
+      ...(e.data !== undefined ? { data: e.data } : {}),
+    };
   }
   if (TAB_GONE_RE.test(message)) {
     return { code: 'TAB_CLOSED', message };
@@ -326,10 +338,10 @@ async function handleCommand(req: Request): Promise<void> {
     const result = await dispatchCommand(req);
     sendWire({ id: req.id, result } as unknown as Response);
   } catch (err) {
-    const { code: errCode, message } = normalizeError(err);
+    const { code: errCode, message, data } = normalizeError(err);
     sendWire({
       id: req.id,
-      error: { code: errCode, message },
+      error: { code: errCode, message, ...(data !== undefined ? { data } : {}) },
     } satisfies ProtocolError);
   }
 }
@@ -338,6 +350,15 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
   const tabId = req.tabId ?? (await activeTabId());
   if (tabId === undefined) {
     throw code('EXTENSION_NO_TAB', 'no tab available');
+  }
+
+  // scroll / scroll-to 可选先激活目标 tab，避免后台标签页被节流。
+  if (
+    (req.method === 'scroll' || req.method === 'scroll-to') &&
+    (req.params as { focus?: boolean } | undefined)?.focus === true
+  ) {
+    await chrome.tabs.update(tabId, { active: true });
+    await sleep(75);
   }
 
   switch (req.method) {
@@ -395,33 +416,42 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
       };
     }
     case 'screenshot': {
-      const p = req.params as { format?: string; selector?: string };
+      const p = req.params as { format?: string; selector?: string; restoreFocus?: boolean };
       const format = p.format ?? 'png';
       // captureVisibleTab 接收 windowId（可选）；先从 tabId 解析出 windowId
       const tab = await chrome.tabs.get(tabId);
-      if (p.selector !== undefined) {
-        // 只截窗口当前可见 tab；目标非 active 时行为未定义，明确报错而不是截错图
-        if (tab.active !== true) {
-          throw code(
-            'TAB_NOT_ACTIVE',
-            `tab ${tabId} is not active; switch to it before element screenshot`,
-          );
+      let previousActive: number | undefined;
+      if (p.selector !== undefined && tab.active !== true) {
+        const [active] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+        previousActive = active?.id;
+        await chrome.tabs.update(tabId, { active: true });
+        await sleep(100);
+      }
+      const restore = async (): Promise<void> => {
+        if (p.restoreFocus === true && previousActive !== undefined) {
+          await chrome.tabs.update(previousActive, { active: true }).catch(() => {});
         }
-        const rectInfo = (await sendToContent(
-          { id: req.id, method: '_element-rect', params: { selector: p.selector } },
-          tabId,
-        )) as ElementRectInfo;
+      };
+      try {
+        if (p.selector !== undefined) {
+          const rectInfo = (await sendToContent(
+            { id: req.id, method: '_element-rect', params: { selector: p.selector } },
+            tabId,
+          )) as ElementRectInfo;
+          const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+            format: format as 'png' | 'jpeg',
+          });
+          const data = await cropScreenshot(dataUrl, rectInfo, format);
+          return { tabId, context: await contextOf(tabId), data: { data } };
+        }
         const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
           format: format as 'png' | 'jpeg',
         });
-        const data = await cropScreenshot(dataUrl, rectInfo, format);
+        const data = dataUrl.split(',')[1] ?? dataUrl;
         return { tabId, context: await contextOf(tabId), data: { data } };
+      } finally {
+        await restore();
       }
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-        format: format as 'png' | 'jpeg',
-      });
-      const data = dataUrl.split(',')[1] ?? dataUrl;
-      return { tabId, context: await contextOf(tabId), data: { data } };
     }
     default:
       break;
@@ -578,6 +608,7 @@ function unwrapContentReply(reply: ContentResult | undefined, id: string): unkno
     throw code(
       (reply.error?.code ?? 'INTERNAL') as ProtocolError['error']['code'],
       reply.error?.message ?? 'unknown content error',
+      reply.error?.data,
     );
   }
   void id;
