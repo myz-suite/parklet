@@ -120,6 +120,76 @@ describe('extractPage', () => {
     }
   });
 
+  it('fields extracts text, attributes, absolute URLs and nulls', () => {
+    setup(
+      '<article class="tweet" data-id="1"><span class="author">Alice</span>' +
+        '<a class="link" href="/alice">@alice</a>' +
+        '<time datetime="2026-11-03T01:02:03Z">1h</time>' +
+        '<p class="text">Hello <b>world</b></p></article>' +
+        '<article class="tweet" data-id="2"><span class="author">Bob</span>' +
+        '<time datetime="2026-11-03T02:03:04Z">2h</time></article>',
+    );
+    const res = extractPage(
+      document,
+      {
+        selector: 'article.tweet',
+        fields: [
+          { name: 'author', selector: '.author' },
+          { name: 'link', selector: '.link', attr: 'href' },
+          { name: 'datetime', selector: 'time', attr: 'datetime' },
+          { name: 'text', selector: '.text' },
+          { name: 'missing', selector: '.nope' },
+        ],
+      },
+      1,
+      0,
+    );
+    expect(res.mode).toBe('fields');
+    if (res.mode === 'fields') {
+      expect(res.total).toBe(2);
+      expect(res.items).toEqual([
+        {
+          author: 'Alice',
+          link: 'http://localhost:3000/alice',
+          datetime: '2026-11-03T01:02:03Z',
+          text: 'Hello world',
+          missing: null,
+        },
+        {
+          author: 'Bob',
+          link: null,
+          datetime: '2026-11-03T02:03:04Z',
+          text: null,
+          missing: null,
+        },
+      ]);
+    }
+  });
+
+  it('fields supports alternatives, pagination and exclude', () => {
+    setup(
+      '<ul><li><span class="a">A1</span></li><li><span class="b">B2</span></li>' +
+        '<li><span class="a">A3</span></li></ul>',
+    );
+    const res = extractPage(
+      document,
+      {
+        selector: 'li',
+        offset: 1,
+        limit: 1,
+        fields: [{ name: 'value', selector: '.a', alternatives: ['.b'] }],
+      },
+      1,
+      0,
+    );
+    if (res.mode === 'fields') {
+      expect(res.total).toBe(3);
+      expect(res.offset).toBe(1);
+      expect(res.limit).toBe(1);
+      expect(res.items).toEqual([{ value: 'B2' }]);
+    }
+  });
+
   it('exclude drops matched elements from text / structured / html', () => {
     setup('<div id="r"><p>keep</p><p class="noise">drop</p></div>');
     const text = extractPage(document, { mode: 'text', selector: '#r', exclude: '.noise' }, 1, 0);

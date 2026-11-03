@@ -72,19 +72,102 @@ export function findByCss(doc: Document, selector: string): Located {
   return { element, info: toElementInfo(element) };
 }
 
-/** 按可见文本定位：模糊包含匹配，可见性过滤，最具体优先，仍歧义则报 TARGET_AMBIGUOUS。 */
-export function findByText(doc: Document, text: string): Located {
-  const needle = text.trim().toLowerCase();
-  const candidates: Element[] = [];
-  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT);
-  let node = walker.nextNode();
-  while (node !== null) {
-    const el = node as Element;
-    if (el.tagName.toLowerCase() !== 'script' && el.tagName.toLowerCase() !== 'style') {
-      const t = visibleTextOf(el).toLowerCase();
-      if (t.includes(needle)) candidates.push(el);
+export interface FindByTextOptions {
+  within?: string;
+  role?: string;
+  exact?: boolean;
+  nth?: number;
+  /** click-text 只考虑可点击目标；纯文本容器不参与 */
+  actionableOnly?: boolean;
+}
+
+const ACTIONABLE_ROLES = new Set([
+  'button',
+  'link',
+  'tab',
+  'menuitem',
+  'option',
+  'checkbox',
+  'radio',
+  'switch',
+]);
+
+/** 显式 role 或隐式角色（只覆盖 click-text 需要的集合）。 */
+export function roleOf(el: Element): string | undefined {
+  const explicit = el.getAttribute('role');
+  if (explicit !== null && explicit.trim() !== '') return explicit.trim().toLowerCase();
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'a' && el.hasAttribute('href')) return 'link';
+  if (tag === 'button') return 'button';
+  if (tag === 'select') return 'combobox';
+  if (tag === 'textarea') return 'textbox';
+  if (tag === 'summary') return 'button';
+  if (tag === 'input') {
+    const type = (el as HTMLInputElement).type;
+    if (type === 'button' || type === 'submit' || type === 'reset' || type === 'image') {
+      return 'button';
     }
-    node = walker.nextNode();
+    if (type === 'checkbox') return 'checkbox';
+    if (type === 'radio') return 'radio';
+    if (type === 'text' || type === 'search' || type === 'email' || type === 'url') {
+      return 'textbox';
+    }
+  }
+  return undefined;
+}
+
+export function isActionable(el: Element): boolean {
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'a' && el.hasAttribute('href')) return true;
+  if (tag === 'button' || tag === 'select' || tag === 'textarea' || tag === 'summary') return true;
+  if (tag === 'input') {
+    const type = (el as HTMLInputElement).type;
+    if (type === 'button' || type === 'submit' || type === 'reset' || type === 'image') return true;
+  }
+  const role = roleOf(el);
+  return role !== undefined && ACTIONABLE_ROLES.has(role);
+}
+
+function candidatesIn(doc: Document, within: string | undefined): Element[] {
+  const roots = within !== undefined ? Array.from(doc.querySelectorAll(within)) : [doc.body];
+  const out = new Set<Element>();
+  for (const root of roots) {
+    out.add(root);
+    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let node = walker.nextNode();
+    while (node !== null) {
+      const el = node as Element;
+      const tag = el.tagName.toLowerCase();
+      if (tag !== 'script' && tag !== 'style') out.add(el);
+      node = walker.nextNode();
+    }
+  }
+  return Array.from(out);
+}
+
+/**
+ * 按可见文本定位：模糊包含/精确匹配，可见性过滤。
+ * `actionableOnly` 先剔除纯文本容器；仅剩 1 个可点击目标时直接返回。
+ * `nth` 按 DOM 顺序在候选（可见/角色过滤后）中选择。
+ */
+export function findByText(doc: Document, text: string, options: FindByTextOptions = {}): Located {
+  const needle = text.trim().toLowerCase();
+  let candidates = candidatesIn(doc, options.within).filter((el) => {
+    const value = visibleTextOf(el).toLowerCase();
+    return options.exact === true ? value === needle : value.includes(needle);
+  });
+
+  if (options.role !== undefined) {
+    const role = options.role.toLowerCase();
+    candidates = candidates.filter((el) => roleOf(el) === role);
+  }
+  if (options.actionableOnly === true) {
+    candidates = candidates.filter(isActionable);
+    if (candidates.length === 0) {
+      throw Object.assign(new Error(`no actionable element contains text '${text}'`), {
+        code: 'TARGET_NOT_FOUND',
+      });
+    }
   }
 
   const visible = candidates.filter(isVisible);
@@ -92,6 +175,17 @@ export function findByText(doc: Document, text: string): Located {
     throw Object.assign(new Error(`no visible element contains text '${text}'`), {
       code: 'TARGET_NOT_FOUND',
     });
+  }
+
+  if (options.nth !== undefined) {
+    const element = visible[options.nth];
+    if (element === undefined) {
+      throw Object.assign(
+        new Error(`text '${text}' has only ${visible.length} match(es); nth=${options.nth}`),
+        { code: 'TARGET_NOT_FOUND' },
+      );
+    }
+    return { element, info: toElementInfo(element) };
   }
 
   // 优先最深层匹配：过滤掉包含其他匹配候选的祖先元素（容器 vs 内容）
@@ -106,7 +200,7 @@ export function findByText(doc: Document, text: string): Located {
   if (best.length > 1) {
     throw Object.assign(
       new Error(
-        `multiple elements match text '${text}' (${best.length}); use a CSS selector instead`,
+        `multiple elements match text '${text}' (${best.length}); use a CSS selector, --role, --within or --nth`,
       ),
       {
         code: 'TARGET_AMBIGUOUS',
@@ -124,7 +218,13 @@ export function locate(
   params: Record<string, unknown>,
 ): Located {
   if (method === 'click-text') {
-    return findByText(doc, String(params.text ?? ''));
+    return findByText(doc, String(params.text ?? ''), {
+      within: typeof params.within === 'string' ? params.within : undefined,
+      role: typeof params.role === 'string' ? params.role : undefined,
+      exact: params.exact === true,
+      nth: params.nth !== undefined ? Number(params.nth) : undefined,
+      actionableOnly: true,
+    });
   }
   return findByCss(doc, String(params.selector ?? ''));
 }

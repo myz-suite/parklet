@@ -10,7 +10,10 @@ import {
   type ProtocolError,
   type Response,
 } from '@parklet/protocol';
+import { runCollect } from './collect.js';
+import { fieldsFromOpts } from './fields.js';
 import { startServer } from './index.js';
+import { interpolateValue } from './template.js';
 
 /** CLI 版本 = 本包 package.json 的 version（与线协议 PROTOCOL_VERSION 不同概念）。 */
 const CLI_PACKAGE_VERSION = (
@@ -29,8 +32,8 @@ interface GlobalOpts {
   path?: string;
   /** screenshot 的 --format（决定默认落盘后缀） */
   format?: string;
-  /** extract structured 的 --prettify（仅展示，不进 wire） */
-  prettify?: boolean;
+  /** 抑制非错误诊断输出 */
+  quiet?: boolean;
 }
 
 /** 未提供 --path 时的默认截图文件名（cwd 下，带时间戳）。 */
@@ -119,6 +122,7 @@ function exitCodeFor(code: ErrorCode | undefined): number {
     case 'UNKNOWN_METHOD':
       return 2;
     case 'TAB_CLOSED':
+    case 'NO_EFFECT':
     case 'TARGET_NOT_FOUND':
     case 'TARGET_AMBIGUOUS':
     case 'TAB_NOT_ACTIVE':
@@ -155,7 +159,72 @@ function paginationLine(
   console.log(`[showing ${shown} of ${d.total}${offset}${limit}]`);
 }
 
+function printLinks(d: {
+  links?: Array<{ href: string; texts: string[]; count: number }>;
+  total?: number;
+  offset?: number;
+  limit?: number;
+  truncated?: boolean;
+}): void {
+  const links = d.links ?? [];
+  for (const l of links) {
+    const label = l.texts.length > 0 ? l.texts.join(' | ') : '(no text)';
+    const times = l.count > 1 ? ` (x${l.count})` : '';
+    console.log(`- ${label} -> ${l.href}${times}`);
+  }
+  paginationLine(links.length, d);
+}
+
+function printForms(d: {
+  forms?: Array<{
+    action?: string;
+    method?: string;
+    target?: string;
+    fields: Array<{
+      tag: string;
+      type: string;
+      name?: string;
+      value?: string;
+      labels: string[];
+      checked?: boolean;
+      selected?: string[];
+      disabled?: boolean;
+      required?: boolean;
+      id?: string;
+    }>;
+  }>;
+  total?: number;
+  offset?: number;
+  limit?: number;
+  truncated?: boolean;
+}): void {
+  const forms = d.forms ?? [];
+  let fieldCount = 0;
+  forms.forEach((form, i) => {
+    const head = form.action ?? '(no form)';
+    const meta = [form.method, form.target].filter(Boolean).join(' ');
+    console.log(`form ${i + 1}: ${head}${meta ? ` [${meta}]` : ''}`);
+    for (const f of form.fields) {
+      fieldCount += 1;
+      const label = f.labels.length > 0 ? f.labels.join(' / ') : '(no label)';
+      const name = f.name !== undefined ? ` name=${f.name}` : '';
+      const value = f.value !== undefined ? ` value=${JSON.stringify(f.value)}` : '';
+      const state =
+        f.checked !== undefined
+          ? ` checked=${f.checked}`
+          : f.selected !== undefined
+            ? ` selected=${JSON.stringify(f.selected)}`
+            : '';
+      const flags = `${f.disabled ? ' disabled' : ''}${f.required ? ' required' : ''}`;
+      console.log(`  - <${f.tag} type=${f.type}> ${label}${name}${value}${state}${flags}`);
+    }
+  });
+  paginationLine(fieldCount, d);
+}
+
 function printResult(method: string, result: Response['result'], opts: GlobalOpts): void {
+  const ctx = formatContext(result);
+  if (ctx.length > 0 && opts.quiet !== true) console.error(ctx);
   if (opts.json) {
     console.log(
       JSON.stringify({
@@ -166,7 +235,6 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
     );
     return;
   }
-  const ctx = formatContext(result);
   const data = result.data as Record<string, unknown> | undefined;
   switch (method) {
     case 'ping': {
@@ -188,11 +256,13 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
     }
     case 'extract': {
       const d = data as {
-        mode?: 'text' | 'structured' | 'article';
+        mode?: 'text' | 'structured' | 'html' | 'article' | 'fields' | 'links' | 'forms';
         snapshot?: { visibleText?: string; viewport?: { width: number; height: number } };
         texts?: string[];
         nodes?: unknown;
-        items?: string[];
+        items?: unknown[];
+        links?: unknown;
+        forms?: unknown;
         total?: number;
         offset?: number;
         limit?: number;
@@ -207,12 +277,13 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
         url?: string;
         wordCount?: number;
       };
-      if (ctx) console.log(ctx);
       const shown = Array.isArray(d.texts)
         ? d.texts.length
         : Array.isArray(d.nodes)
           ? d.nodes.length
-          : 0;
+          : Array.isArray(d.items)
+            ? d.items.length
+            : 0;
       const range =
         d.total !== undefined
           ? `[showing ${shown} of ${d.total}${d.offset !== undefined ? `, offset=${d.offset}` : ''}${d.limit !== undefined ? `, limit=${d.limit}` : ''}]`
@@ -235,14 +306,21 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
           console.log('---\n');
         }
         console.log(d.content ?? '(no content)');
+      } else if (d.mode === 'fields' && Array.isArray(d.items)) {
+        for (const item of d.items) console.log(JSON.stringify(item));
+        if (range) console.log(range);
+      } else if (d.mode === 'links') {
+        printLinks(d as Parameters<typeof printLinks>[0]);
+      } else if (d.mode === 'forms') {
+        printForms(d as Parameters<typeof printForms>[0]);
       } else if (Array.isArray(d.texts)) {
         d.texts.forEach((t, i) => console.log(`[${i + 1}] ${t}`));
         if (range) console.log(range);
       } else if (Array.isArray(d.items)) {
-        d.items.forEach((html, i) => console.log(`[${i + 1}] ${html}`));
+        d.items.forEach((html, i) => console.log(`[${i + 1}] ${String(html)}`));
         if (range) console.log(range);
       } else if (d.nodes !== undefined) {
-        console.log(opts.prettify ? JSON.stringify(d.nodes, null, 2) : JSON.stringify(d.nodes));
+        console.log(JSON.stringify(d.nodes));
         if (d.truncated === true) console.log('(truncated at node budget)');
         if (range) console.log(range);
       } else {
@@ -258,10 +336,31 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
         title?: string;
         viewport?: { width: number; height: number };
         scrollY?: number;
+        readyState?: string;
+        visibilityState?: string;
+        activeElement?: { tag: string; id?: string; role?: string };
+        selection?: string;
+        scroll?: { y: number; scrollHeight: number; clientHeight: number };
+        selector?: { count: number; box?: { x: number; y: number; width: number; height: number } };
       };
       console.log(`url: ${d.url}`);
       console.log(`title: ${d.title}`);
       console.log(`viewport: ${d.viewport?.width}x${d.viewport?.height}  scrollY: ${d.scrollY}`);
+      console.log(
+        `state: ${d.readyState ?? '?'} / ${d.visibilityState ?? '?'}` +
+          (d.activeElement
+            ? `  active: <${d.activeElement.tag}${d.activeElement.id ? `#${d.activeElement.id}` : ''}>`
+            : ''),
+      );
+      if (d.selection !== undefined && d.selection.length > 0) {
+        console.log(`selection: ${d.selection}`);
+      }
+      if (d.selector !== undefined) {
+        const box = d.selector.box
+          ? ` @(${d.selector.box.x},${d.selector.box.y},${d.selector.box.width}x${d.selector.box.height})`
+          : '';
+        console.log(`selector: ${d.selector.count} match(es)${box}`);
+      }
       break;
     }
     case 'eval': {
@@ -293,79 +392,13 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
       console.log(`(${d.matches?.length ?? 0} of ${d.total ?? 0})`);
       break;
     }
-    case 'links': {
-      const d = data as {
-        links?: Array<{ href: string; texts: string[]; count: number }>;
-        total?: number;
-        offset?: number;
-        limit?: number;
-        truncated?: boolean;
-      };
-      const links = d.links ?? [];
-      for (const l of links) {
-        const label = l.texts.length > 0 ? l.texts.join(' | ') : '(no text)';
-        const times = l.count > 1 ? ` (x${l.count})` : '';
-        console.log(`- ${label} -> ${l.href}${times}`);
-      }
-      paginationLine(links.length, d);
-      break;
-    }
-    case 'forms': {
-      const d = data as {
-        forms?: Array<{
-          action?: string;
-          method?: string;
-          target?: string;
-          fields: Array<{
-            tag: string;
-            type: string;
-            name?: string;
-            value?: string;
-            labels: string[];
-            checked?: boolean;
-            selected?: string[];
-            disabled?: boolean;
-            required?: boolean;
-            id?: string;
-          }>;
-        }>;
-        total?: number;
-        offset?: number;
-        limit?: number;
-        truncated?: boolean;
-      };
-      const forms = d.forms ?? [];
-      let fieldCount = 0;
-      forms.forEach((form, i) => {
-        const head = form.action ?? '(no form)';
-        const meta = [form.method, form.target].filter(Boolean).join(' ');
-        console.log(`form ${i + 1}: ${head}${meta ? ` [${meta}]` : ''}`);
-        for (const f of form.fields) {
-          fieldCount += 1;
-          const label = f.labels.length > 0 ? f.labels.join(' / ') : '(no label)';
-          const name = f.name !== undefined ? ` name=${f.name}` : '';
-          const value = f.value !== undefined ? ` value=${JSON.stringify(f.value)}` : '';
-          const state =
-            f.checked !== undefined
-              ? ` checked=${f.checked}`
-              : f.selected !== undefined
-                ? ` selected=${JSON.stringify(f.selected)}`
-                : '';
-          const flags = `${f.disabled ? ' disabled' : ''}${f.required ? ' required' : ''}`;
-          console.log(`  - <${f.tag} type=${f.type}> ${label}${name}${value}${state}${flags}`);
-        }
-      });
-      paginationLine(fieldCount, d);
-      break;
-    }
     case 'click':
     case 'click-text':
     case 'fill':
     case 'type':
     case 'press':
     case 'hover':
-    case 'select':
-    case 'scroll-to': {
+    case 'select': {
       const d = data as {
         element?: { tag: string; text?: string; box?: { x: number; y: number } };
       };
@@ -374,9 +407,48 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
       console.log(`⚡ <${el?.tag ?? '?'}> ${el?.text ?? ''}${box}`);
       break;
     }
+    case 'scroll-to': {
+      const d = data as {
+        element?: { tag: string; text?: string; box?: { x: number; y: number } };
+        before?: { y: number };
+        after?: { y: number };
+        delta?: { y: number };
+        settled?: boolean;
+        warning?: string;
+      };
+      const el = d.element;
+      const box = el?.box ? ` @(${el.box.x},${el.box.y})` : '';
+      const y =
+        d.before !== undefined && d.after !== undefined
+          ? ` y ${d.before.y} -> ${d.after.y} (Δ${d.delta?.y ?? '?'})`
+          : '';
+      console.log(`⚡ <${el?.tag ?? '?'}> ${el?.text ?? ''}${box}${y}`);
+      if (d.warning === 'BACKGROUND_TAB' && opts.quiet !== true) {
+        console.error('⚠ target tab is in the background; scroll may be throttled (use --focus)');
+      }
+      break;
+    }
     case 'scroll': {
-      const d = data as { viewport?: { width: number; height: number } };
-      console.log(`scrolled — viewport ${d.viewport?.width}x${d.viewport?.height}`);
+      const d = data as {
+        target?: 'page' | { selector?: string };
+        before?: { x: number; y: number };
+        after?: { x: number; y: number };
+        delta?: { x: number; y: number };
+        atTop?: boolean;
+        atBottom?: boolean;
+        settled?: boolean;
+        warning?: string;
+      };
+      const target =
+        d.target === 'page' || d.target === undefined
+          ? 'page'
+          : `element ${d.target.selector ?? '?'}`;
+      const y = `y ${d.before?.y ?? '?'} -> ${d.after?.y ?? '?'} (Δ${d.delta?.y ?? '?'})`;
+      const flags = `${d.atTop ? ' [top]' : ''}${d.atBottom ? ' [bottom]' : ''}${d.settled === false ? ' [unsettled]' : ''}`;
+      console.log(`scrolled ${target}: ${y}${flags}`);
+      if (d.warning === 'BACKGROUND_TAB' && opts.quiet !== true) {
+        console.error('⚠ target tab is in the background; scroll may be throttled (use --focus)');
+      }
       break;
     }
     case 'screenshot': {
@@ -423,17 +495,21 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
       console.log(String(d.body ?? '').slice(0, 2000));
       break;
     }
+    case 'wait': {
+      const d = data as { matched?: number; waitedMs?: number; stable?: boolean };
+      console.log(
+        `waited ${d.waitedMs ?? '?'}ms${d.matched !== undefined ? `, matched ${d.matched}` : ''}${d.stable === false ? ', unstable' : ''}`,
+      );
+      break;
+    }
     case 'goto':
     case 'back':
     case 'forward':
     case 'reload':
     case 'activate-tab':
     case 'create-tab':
-    case 'wait':
-      if (ctx) console.log(ctx);
       break;
     default:
-      if (ctx) console.log(ctx);
       if (data !== undefined) console.log(JSON.stringify(data));
   }
 }
@@ -459,10 +535,18 @@ function register(
   const c = program.command(name).description(description);
   options?.(c);
   c.action((...rawArgs: unknown[]) => {
-    const commandObj = rawArgs.pop() as Command;
-    const opts = commandObj.optsWithGlobals() as Record<string, unknown>;
-    const args = rawArgs as string[];
-    void run(method, buildParams(opts, args), opts);
+    try {
+      const commandObj = rawArgs.pop() as Command;
+      const opts = commandObj.optsWithGlobals() as Record<string, unknown>;
+      const args = rawArgs as string[];
+      void run(method, buildParams(opts, args), opts).catch((err: unknown) => {
+        console.error(`✖ ${(err as Error).message ?? String(err)}`);
+        process.exitCode = 1;
+      });
+    } catch (err) {
+      console.error(`✖ ${(err as Error).message ?? String(err)}`);
+      process.exitCode = 2;
+    }
   });
 }
 
@@ -478,7 +562,7 @@ async function run(
     tab: opts.tab !== undefined ? Number(opts.tab) : undefined,
     path: typeof opts.path === 'string' ? opts.path : undefined,
     format: typeof opts.format === 'string' ? opts.format : undefined,
-    prettify: Boolean(opts.prettify),
+    quiet: Boolean(opts.quiet),
   };
   const res = await callCommand(method, params, g);
   if ('error' in res) {
@@ -486,8 +570,6 @@ async function run(
     process.exitCode = exitCodeFor(res.error.code);
   } else {
     printResult(method, res.result, g);
-    const unread = (res.result as { unreadCount?: number }).unreadCount ?? 0;
-    if (unread > 0 && !g.json) console.log(`\n🔔 ${unread} new events, run \`plt events\``);
     process.exitCode = 0;
   }
 }
@@ -501,6 +583,7 @@ export function buildProgram(): Command {
     .option('--json', 'output structured JSON (envelope)')
     .option('--timeout <ms>', 'command timeout in milliseconds', '30000')
     .option('--tab <id>', 'target tab id (defaults to the server current tab / last active tab)')
+    .option('--quiet', 'suppress non-error diagnostics on stderr')
     .addHelpText(
       'after',
       `
@@ -556,9 +639,21 @@ Run \`plt <command> --help\` for command-specific options.`,
     program,
     'click-text',
     'click-text',
-    'click an element by visible text',
-    (_opts, args) => ({ text: args[0] }),
-    (c) => c.argument('<text>', 'visible text (fuzzy match, must be unique)'),
+    'click an actionable element by visible text',
+    (opts, args) => ({
+      text: args[0],
+      within: opts.within,
+      role: opts.role,
+      exact: opts.exact === true ? true : undefined,
+      nth: opts.nth !== undefined ? Number(opts.nth) : undefined,
+    }),
+    (c) =>
+      c
+        .argument('<text>', 'visible text')
+        .option('--within <css>', 'limit the search to this scope')
+        .option('--role <role>', 'only match this role (button/link/tab/...)')
+        .option('--exact', 'match the full normalized text')
+        .option('--nth <n>', 'pick the nth match (0-based, DOM order)'),
   );
   register(
     program,
@@ -630,36 +725,43 @@ Run \`plt <command> --help\` for command-specific options.`,
     program,
     'scroll',
     'scroll',
-    'scroll the page (direction|amount|selector)',
-    (opts, args) => {
-      const first = args[0];
-      const direction =
-        opts.direction ??
-        (typeof first === 'string' && ['up', 'down', 'top', 'bottom'].includes(first)
-          ? first
-          : undefined);
-      const amount =
-        opts.amount !== undefined
-          ? Number(opts.amount)
-          : !direction && first !== undefined
-            ? Number(first)
-            : undefined;
-      return { direction, amount, selector: opts.selector };
-    },
+    'scroll the page or an element (--by/--to; --selector for inner scroll)',
+    (opts) => ({
+      by: opts.by !== undefined ? Number(opts.by) : undefined,
+      to: opts.to,
+      selector: opts.selector,
+      smooth: opts.smooth === true ? true : undefined,
+      settle: opts.settle !== false,
+      focus: opts.focus === true ? true : undefined,
+      allowNoop: opts.allowNoop === true ? true : undefined,
+    }),
     (c) =>
       c
-        .argument('[direction|amount]', 'up|down|top|bottom or pixel amount')
+        .option('--by <px>', 'scroll by pixels (negative = up)')
+        .option('--to <edge>', 'top|bottom')
         .option('--selector <css>', 'scroll inside this element (overflow container)')
-        .option('--direction <d>')
-        .option('--amount <n>'),
+        .option('--smooth', 'use smooth scrolling')
+        .option('--no-settle', 'do not wait for the scroll position to settle')
+        .option('--focus', 'activate the target tab before scrolling')
+        .option('--allow-noop', 'allow a scroll with no effect (delta=0)'),
   );
   register(
     program,
     'scroll-to',
     'scroll-to',
     'scroll the page so the element is in view',
-    (_opts, args) => ({ selector: args[0] }),
-    (c) => c.argument('<selector>', 'CSS selector to bring into view'),
+    (opts, args) => ({
+      selector: args[0],
+      smooth: opts.smooth === true ? true : undefined,
+      settle: opts.settle !== false,
+      focus: opts.focus === true ? true : undefined,
+    }),
+    (c) =>
+      c
+        .argument('<selector>', 'CSS selector to bring into view')
+        .option('--smooth', 'use smooth scrolling')
+        .option('--no-settle', 'do not wait for the scroll position to settle')
+        .option('--focus', 'activate the target tab before scrolling'),
   );
   register(
     program,
@@ -668,15 +770,15 @@ Run \`plt <command> --help\` for command-specific options.`,
     'capture a screenshot (optionally a single element)',
     (opts) => ({
       path: opts.path,
-      fullPage: opts.full,
       format: opts.format,
       selector: opts.selector,
+      restoreFocus: opts.restoreFocus === true ? true : undefined,
     }),
     (c) =>
       c
         .option('--path <file>', 'output file (default: screenshot-<timestamp>.png)')
-        .option('--selector <css>', 'capture a single element (tab must be active)')
-        .option('--full', 'full page (experimental)')
+        .option('--selector <css>', 'capture a single element (auto-activates the tab)')
+        .option('--restore-focus', 'restore the previously active tab after capture')
         .option('--format <fmt>', 'png|jpeg', 'png'),
   );
 
@@ -685,37 +787,42 @@ Run \`plt <command> --help\` for command-specific options.`,
     program,
     'extract',
     'extract',
-    'extract text, a DOM tree, or an article body',
+    'extract text / DOM / article / fields / links / forms',
     (opts) => ({
       mode: opts.mode,
+      fields: fieldsFromOpts(opts),
       article: opts.article,
-      selector: opts.selector,
+      selector: opts.selector ?? opts.within,
       offset: opts.offset !== undefined ? Number(opts.offset) : undefined,
       limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
       depth: opts.depth !== undefined ? Number(opts.depth) : undefined,
-      visibleOnly: opts.visibleOnly,
+      visibleOnly: opts.all === true ? false : opts.visibleOnly,
       maxChars: opts.maxChars !== undefined ? Number(opts.maxChars) : undefined,
       exclude: opts.exclude,
     }),
     (c) =>
       c
-        .option('--mode <m>', 'text|structured|html (default: text)')
+        .option('--mode <m>', 'text|structured|html|links|forms (default: text)')
+        .option('--all', 'include invisible elements (links/forms)')
+        .option('--fields <spec>', 'structured fields: name=selector[@attr][|fallback],...')
+        .option('--fields-file <json>', 'JSON array of {name,selector,attr?,alternatives?}')
         .option('--article', 'extract article body (defuddle)')
-        .option('--selector <css>', 'CSS selector (first-level list)')
+        .option('--selector <css>', 'CSS selector (first-level list / row selector)')
+        .option('--within <css>', 'alias for --selector')
         .option('--depth <n>', 'structured recursion depth (default 3)')
         .option('--offset <n>', 'skip first N elements of the first-level list')
         .option('--limit <n>', 'max elements of the first-level list (element count)')
         .option('--max-chars <n>', 'truncate text mode per segment (default: no truncation)')
         .option('--exclude <css>', 'drop elements matching this CSS before extracting')
-        .option('--prettify', 'pretty-print structured JSON')
         .option('--visible-only', 'filter invisible first-level elements'),
   );
   register(
     program,
     'page-info',
     'get-page-info',
-    'show page url/title/viewport/scroll',
-    () => ({}),
+    'show page url/title/viewport/scroll/state',
+    (opts) => ({ selector: opts.selector }),
+    (c) => c.option('--selector <css>', 'also report match count and first box'),
   );
   register(
     program,
@@ -734,43 +841,6 @@ Run \`plt <command> --help\` for command-specific options.`,
         .option('--text <text>', 'match by visible text')
         .option('--limit <n>', 'max matches (default 20)'),
   );
-  register(
-    program,
-    'links',
-    'links',
-    'list visible links grouped by href',
-    (opts) => ({
-      selector: opts.selector,
-      offset: opts.offset !== undefined ? Number(opts.offset) : undefined,
-      limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
-      visibleOnly: opts.all ? false : undefined,
-    }),
-    (c) =>
-      c
-        .option('--selector <css>', 'scope to elements matching this CSS selector')
-        .option('--offset <n>', 'skip first N href groups')
-        .option('--limit <n>', 'max N href groups')
-        .option('--all', 'include invisible links'),
-  );
-  register(
-    program,
-    'forms',
-    'forms',
-    'list visible form fields grouped by form',
-    (opts) => ({
-      selector: opts.selector,
-      offset: opts.offset !== undefined ? Number(opts.offset) : undefined,
-      limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
-      visibleOnly: opts.all ? false : undefined,
-    }),
-    (c) =>
-      c
-        .option('--selector <css>', 'scope to elements matching this CSS selector')
-        .option('--offset <n>', 'skip first N fields')
-        .option('--limit <n>', 'max N fields')
-        .option('--all', 'include invisible fields'),
-  );
-
   // 页面内网络
   register(
     program,
@@ -820,7 +890,7 @@ Run \`plt <command> --help\` for command-specific options.`,
     program,
     'tab',
     'activate-tab',
-    'activate a tab',
+    'activate a tab and make it the current tab',
     (_opts, args) => ({ tabId: Number(args[0]) }),
     (c) => c.argument('<tabId>', 'tab id to activate (see `plt tabs`)'),
   );
@@ -828,7 +898,7 @@ Run \`plt <command> --help\` for command-specific options.`,
     program,
     'tab-new',
     'create-tab',
-    'open a new tab',
+    'open a new tab, activate it and make it current',
     (_opts, args) => ({ url: args[0] }),
     (c) => c.argument('<url>', 'URL to open'),
   );
@@ -837,8 +907,13 @@ Run \`plt <command> --help\` for command-specific options.`,
     'tab-close',
     'close-tab',
     'close a tab (default: current)',
-    (_opts, args) => ({ tabId: args[0] !== undefined ? Number(args[0]) : undefined }),
-    (c) => c.argument('[tabId]', 'tab id (default: the targeted tab)'),
+    (opts, args) => {
+      if (opts.tab !== undefined && args[0] !== undefined) {
+        throw new Error('tab-close: use either --tab <id> or a positional tab id, not both');
+      }
+      return { tabId: args[0] !== undefined ? Number(args[0]) : undefined };
+    },
+    (c) => c.argument('[tabId]', 'tab id (default: the current tab)'),
   );
 
   // 等待
@@ -850,10 +925,17 @@ Run \`plt <command> --help\` for command-specific options.`,
     (opts) => ({
       ms: opts.ms !== undefined ? Number(opts.ms) : undefined,
       selector: opts.selector,
+      count: opts.count !== undefined ? Number(opts.count) : undefined,
+      stableMs: opts.stable !== undefined ? Number(opts.stable) : undefined,
       condition: opts.condition,
     }),
     (c) =>
-      c.option('--ms <n>').option('--selector <css>').option('--condition <c>', 'networkidle|load'),
+      c
+        .option('--ms <n>')
+        .option('--selector <css>')
+        .option('--count <n>', 'wait until at least N elements match')
+        .option('--stable <ms>', 'wait until the count is unchanged for N ms')
+        .option('--condition <c>', 'networkidle|load|content'),
   );
 
   // 高级：页面脚本执行（默认禁用，需 server 侧 PARKLET_ENABLE_EVAL=1）
@@ -869,6 +951,89 @@ Run \`plt <command> --help\` for command-specific options.`,
         .option('--file <path>', 'read the script from a file')
         .option('--stdin', 'read the script from stdin'),
   );
+
+  // 批量采集：extract --fields + scroll 的固定轮次编排
+  program
+    .command('collect')
+    .description('collect rows while scrolling a fixed number of times (fields + repeat)')
+    .argument('<selector>', 'row selector (e.g. article[data-testid="tweet"])')
+    .option('--fields <spec>', 'name=selector[@attr][|fallback],...')
+    .option('--fields-file <json>', 'JSON array of {name,selector,attr?,alternatives?}')
+    .option('--repeat <n>', 'number of scroll rounds (required, >= 1)')
+    .option('--scroll-by <px>', 'pixels per scroll (default: 0.8 viewport, capped at viewport)')
+    .option('--max-items <n>', 'stop after N items', '10000')
+    .option('--dedupe-key <fields>', 'comma-separated dedupe fields (default: id / author,text)')
+    .option('--dedupe-prefix <n>', 'use first N chars of text fields for dedupe', '0')
+    .option('--no-dedupe', 'do not de-duplicate')
+    .option('--no-focus', 'do not activate the target tab before collecting')
+    .option('--jsonl', 'print one item per line; summary goes to stderr')
+    .action(async function (this: Command, selector: string) {
+      const opts = this.optsWithGlobals() as Record<string, unknown>;
+      const g = globalOptsFrom(opts);
+      try {
+        const fields = fieldsFromOpts(opts);
+        if (fields === undefined) throw new Error('collect requires --fields or --fields-file');
+        const repeat = Number(opts.repeat);
+        if (!Number.isFinite(repeat)) throw new Error('collect requires --repeat <n>');
+        const jsonl = opts.jsonl === true;
+        if (jsonl && g.json) throw new Error('use only one of --json and --jsonl');
+
+        const send = async (
+          method: string,
+          params: Record<string, unknown>,
+          tabId?: number,
+        ): Promise<Record<string, unknown>> => {
+          const scoped: GlobalOpts = tabId !== undefined ? { ...g, tab: tabId } : g;
+          const res = await callCommand(method, params, scoped);
+          if ('error' in res) {
+            throw Object.assign(new Error(res.error.message), {
+              code: res.error.code,
+              data: res.error.data,
+            });
+          }
+          return (res.result.data ?? {}) as Record<string, unknown>;
+        };
+
+        const report = await runCollect(send, {
+          selector,
+          fields,
+          repeat,
+          scrollBy: opts.scrollBy !== undefined ? Number(opts.scrollBy) : undefined,
+          maxItems: Number(opts.maxItems ?? 10000),
+          dedupe: opts.dedupe !== false,
+          dedupeKey: typeof opts.dedupeKey === 'string' ? opts.dedupeKey : undefined,
+          dedupePrefix: Number(opts.dedupePrefix ?? 0),
+          focus: opts.focus !== false,
+          tabId: g.tab,
+        });
+
+        if (g.json) {
+          console.log(JSON.stringify(report));
+        } else {
+          for (const item of report.items) console.log(JSON.stringify(item));
+          const summary = {
+            total: report.total,
+            scrolls: report.scrolls,
+            duplicates: report.duplicates,
+            zeroNewSteps: report.zeroNewSteps,
+            stoppedReason: report.stoppedReason,
+            ...(report.observed !== undefined ? { observed: report.observed } : {}),
+          };
+          if (g.quiet !== true) console.error(JSON.stringify(summary));
+        }
+        process.exitCode = 0;
+      } catch (err) {
+        const e = err as Error & { code?: ErrorCode };
+        if (g.json) {
+          console.log(
+            JSON.stringify({ error: { code: e.code ?? 'INTERNAL', message: e.message } }),
+          );
+        } else {
+          console.error(`✖ [${e.code ?? 'INTERNAL'}] ${e.message}`);
+        }
+        process.exitCode = exitCodeFor(e.code);
+      }
+    });
 
   // 启动 relay server（npm -g 安装后的便捷入口）
   program
@@ -905,12 +1070,23 @@ Run \`plt <command> --help\` for command-specific options.`,
   program
     .command('run')
     .description('run a batch of commands from a JSON-lines file (or stdin), one per line')
-    .argument('[file]', "file with one {method, params?, tabId?} per line ('-' = stdin)")
+    .argument('[file]', "file with one {method, params?, tabId?, as?} per line ('-' = stdin)")
     .option('--fail-fast', 'stop at the first error', false)
+    .option('--var <k=v>', 'set a variable (repeatable)', collect)
     .action(async function (this: Command, file: string | undefined) {
       const globals = this.optsWithGlobals() as Record<string, unknown>;
       const g = globalOptsFrom(globals);
       const failFast = Boolean(this.opts().failFast);
+      const vars: Record<string, unknown> = {};
+      for (const item of (this.opts().var as string[] | undefined) ?? []) {
+        const eq = item.indexOf('=');
+        if (eq <= 0) {
+          console.error(`✖ invalid --var '${item}' (expected k=v)`);
+          process.exitCode = 2;
+          return;
+        }
+        vars[item.slice(0, eq)] = item.slice(eq + 1);
+      }
       const raw =
         file === undefined || file === '-' ? readFileSync(0, 'utf8') : readFileSync(file, 'utf8');
       const lines = raw
@@ -921,7 +1097,13 @@ Run \`plt <command> --help\` for command-specific options.`,
       let index = 0;
       for (const line of lines) {
         index += 1;
-        let entry: { method?: string; params?: unknown; tabId?: number };
+        let entry: {
+          method?: string;
+          params?: unknown;
+          tabId?: number;
+          vars?: Record<string, unknown>;
+          as?: string;
+        };
         try {
           entry = JSON.parse(line) as typeof entry;
         } catch {
@@ -930,6 +1112,16 @@ Run \`plt <command> --help\` for command-specific options.`,
           if (failFast) break;
           continue;
         }
+        if (entry.vars !== undefined) {
+          if (entry.vars === null || typeof entry.vars !== 'object') {
+            failures += 1;
+            console.error(`#${index}: 'vars' must be an object`);
+            if (failFast) break;
+            continue;
+          }
+          Object.assign(vars, entry.vars);
+          if (entry.method === undefined) continue;
+        }
         if (typeof entry.method !== 'string') {
           failures += 1;
           console.error(`#${index}: missing 'method'`);
@@ -937,12 +1129,20 @@ Run \`plt <command> --help\` for command-specific options.`,
           continue;
         }
         const g2: GlobalOpts = entry.tabId !== undefined ? { ...g, tab: entry.tabId } : g;
-        if (!g.json) console.log(`#${index} ${entry.method}`);
-        const res = await callCommand(
-          entry.method,
-          (entry.params ?? {}) as Record<string, unknown>,
-          g2,
-        );
+        if (!g.json && g.quiet !== true) console.error(`#${index} ${entry.method}`);
+        let params: Record<string, unknown>;
+        try {
+          params = interpolateValue(entry.params ?? {}, vars) as Record<string, unknown>;
+        } catch (err) {
+          failures += 1;
+          console.error(`#${index}: ${(err as Error).message}`);
+          if (failFast) {
+            process.exitCode = 2;
+            return;
+          }
+          continue;
+        }
+        const res = await callCommand(entry.method, params, g2);
         if ('error' in res) {
           failures += 1;
           printError(res.error, g);
@@ -950,10 +1150,15 @@ Run \`plt <command> --help\` for command-specific options.`,
             process.exitCode = exitCodeFor(res.error.code);
             return;
           }
-        } else if (g.json) {
-          console.log(JSON.stringify({ ...res.result }));
         } else {
-          printResult(entry.method, res.result, g2);
+          if (entry.as !== undefined) {
+            vars[entry.as] = res.result.data ?? {};
+          }
+          if (g.json) {
+            console.log(JSON.stringify({ ...res.result }));
+          } else {
+            printResult(entry.method, res.result, g2);
+          }
         }
       }
       if (failures > 0) process.exitCode = 1;
@@ -1039,8 +1244,6 @@ Run \`plt <command> --help\` for command-specific options.`,
     extract: 'Extraction',
     'page-info': 'Extraction',
     'dom-query': 'Extraction',
-    links: 'Extraction',
-    forms: 'Extraction',
     fetch: 'Network',
     search: 'Network',
     tabs: 'Tabs',
@@ -1054,6 +1257,7 @@ Run \`plt <command> --help\` for command-specific options.`,
     logs: 'Ops',
     events: 'Ops',
     run: 'Ops',
+    collect: 'Ops',
     serve: 'Server',
   };
   for (const cmd of program.commands) {
@@ -1064,7 +1268,7 @@ Run \`plt <command> --help\` for command-specific options.`,
   return program;
 }
 
-function collect(value: string, previous: string[]): string[] {
+function collect(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
 
@@ -1093,6 +1297,7 @@ function globalOptsFrom(opts: Record<string, unknown>): GlobalOpts {
     json: Boolean(opts.json),
     timeout: String(opts.timeout ?? '30000'),
     tab: opts.tab !== undefined ? Number(opts.tab) : undefined,
+    quiet: Boolean(opts.quiet),
   };
 }
 

@@ -68,29 +68,149 @@ describe('interaction actions', () => {
     expect((res as { element: { tag: string } }).element.tag).toBe('select');
   });
 
-  it('scroll returns the viewport', async () => {
+  it('scroll --by returns before/after/delta', async () => {
     document.body.innerHTML = '<div style="height:2000px"></div>';
-    const res = await executeDomAction('scroll', { direction: 'down' }, document, 1, 0);
-    expect((res as { viewport: { width: number } }).viewport.width).toBeGreaterThan(0);
+    const originalY = Object.getOwnPropertyDescriptor(window, 'scrollY');
+    const originalScrollBy = (window as unknown as { scrollBy?: unknown }).scrollBy;
+    let y = 0;
+    Object.defineProperty(window, 'scrollY', { configurable: true, get: () => y });
+    (window as unknown as { scrollBy: (o: ScrollToOptions) => void }).scrollBy = (o) => {
+      y += Number(o.top ?? 0);
+    };
+    try {
+      const res = (await executeDomAction(
+        'scroll',
+        { by: 850, settle: false },
+        document,
+        1,
+        0,
+      )) as {
+        before: { y: number };
+        after: { y: number };
+        delta: { y: number };
+      };
+      expect(res.before.y).toBe(0);
+      expect(res.after.y).toBe(850);
+      expect(res.delta.y).toBe(850);
+    } finally {
+      if (originalY !== undefined) Object.defineProperty(window, 'scrollY', originalY);
+      if (originalScrollBy !== undefined) {
+        (window as unknown as { scrollBy: unknown }).scrollBy = originalScrollBy;
+      }
+    }
   });
 
-  it('scroll with a selector scrolls inside the element (scrollBy)', async () => {
+  it('scroll settle completes when the document is hidden', async () => {
+    document.body.innerHTML = '<div style="height:2000px"></div>';
+    const originalScrollBy = (window as unknown as { scrollBy?: unknown }).scrollBy;
+    const originalY = Object.getOwnPropertyDescriptor(window, 'scrollY');
+    let y = 0;
+    Object.defineProperty(window, 'scrollY', { configurable: true, get: () => y });
+    (window as unknown as { scrollBy: (o: ScrollToOptions) => void }).scrollBy = (o) => {
+      y += Number(o.top ?? 0);
+    };
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    try {
+      const started = Date.now();
+      const res = (await executeDomAction('scroll', { by: 100 }, document, 1, 0)) as {
+        warning?: string;
+        settled?: boolean;
+      };
+      expect(res.warning).toBe('BACKGROUND_TAB');
+      expect(res.settled).toBe(true);
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      delete (document as unknown as { visibilityState?: string }).visibilityState;
+      if (originalY !== undefined) Object.defineProperty(window, 'scrollY', originalY);
+      if (originalScrollBy !== undefined) {
+        (window as unknown as { scrollBy: unknown }).scrollBy = originalScrollBy;
+      }
+    }
+  });
+
+  it('scroll with no effect reports NO_EFFECT', async () => {
+    document.body.innerHTML = '<div style="height:2000px"></div>';
+    const originalScrollBy = (window as unknown as { scrollBy?: unknown }).scrollBy;
+    (window as unknown as { scrollBy: (o: ScrollToOptions) => void }).scrollBy = () => {};
+    try {
+      await expect(
+        executeDomAction('scroll', { by: 100, settle: false }, document, 1, 0),
+      ).rejects.toMatchObject({ code: 'NO_EFFECT' });
+      const allowed = (await executeDomAction(
+        'scroll',
+        { by: 100, settle: false, allowNoop: true },
+        document,
+        1,
+        0,
+      )) as { delta: { y: number } };
+      expect(allowed.delta.y).toBe(0);
+    } finally {
+      if (originalScrollBy !== undefined) {
+        (window as unknown as { scrollBy: unknown }).scrollBy = originalScrollBy;
+      }
+    }
+  });
+
+  it('scroll reports BACKGROUND_TAB when the document is hidden', async () => {
+    document.body.innerHTML = '<div style="height:2000px"></div>';
+    const originalScrollBy = (window as unknown as { scrollBy?: unknown }).scrollBy;
+    const originalY = Object.getOwnPropertyDescriptor(window, 'scrollY');
+    let y = 0;
+    Object.defineProperty(window, 'scrollY', { configurable: true, get: () => y });
+    (window as unknown as { scrollBy: (o: ScrollToOptions) => void }).scrollBy = (o) => {
+      y += Number(o.top ?? 0);
+    };
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    try {
+      const res = (await executeDomAction(
+        'scroll',
+        { by: 100, settle: false },
+        document,
+        1,
+        0,
+      )) as { warning?: string; visibilityState?: string };
+      expect(res.visibilityState).toBe('hidden');
+      expect(res.warning).toBe('BACKGROUND_TAB');
+    } finally {
+      delete (document as unknown as { visibilityState?: string }).visibilityState;
+      if (originalY !== undefined) Object.defineProperty(window, 'scrollY', originalY);
+      if (originalScrollBy !== undefined) {
+        (window as unknown as { scrollBy: unknown }).scrollBy = originalScrollBy;
+      }
+    }
+  });
+
+  it('scroll with a selector returns the element delta', async () => {
     document.body.innerHTML = '<div id="box" style="height:100px;overflow:auto"></div>';
-    const box = document.getElementById('box')!;
-    const calls: ScrollToOptions[] = [];
-    (box as unknown as { scrollBy: (o: ScrollToOptions) => void }).scrollBy = (o) => calls.push(o);
+    const box = document.getElementById('box')! as HTMLElement;
+    let top = 0;
+    Object.defineProperty(box, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (value: number) => {
+        top = value;
+      },
+    });
+    Object.defineProperty(box, 'scrollHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(box, 'clientHeight', { configurable: true, value: 100 });
+    (box as unknown as { scrollBy: (o: ScrollToOptions) => void }).scrollBy = (o) => {
+      top += Number(o.top ?? 0);
+    };
     const res = (await executeDomAction(
       'scroll',
-      { selector: '#box', amount: 300 },
+      { selector: '#box', by: 300, settle: false },
       document,
       1,
       0,
     )) as {
-      viewport: unknown;
+      target: { selector: string };
+      delta: { y: number };
     };
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.top).toBe(300);
-    expect(res.viewport).toBeDefined();
+    expect(res.target.selector).toBe('#box');
+    expect(res.delta.y).toBe(300);
   });
 
   it('scroll-to brings the element into view and returns it', async () => {
@@ -98,7 +218,13 @@ describe('interaction actions', () => {
     const el = document.getElementById('target')!;
     const spy = vi.fn();
     (el as unknown as { scrollIntoView: () => void }).scrollIntoView = spy;
-    const res = (await executeDomAction('scroll-to', { selector: '#target' }, document, 1, 0)) as {
+    const res = (await executeDomAction(
+      'scroll-to',
+      { selector: '#target', settle: false },
+      document,
+      1,
+      0,
+    )) as {
       element?: { tag?: string };
     };
     expect(spy).toHaveBeenCalledTimes(1);
@@ -316,6 +442,31 @@ describe('extract and wait', () => {
     };
     expect(res.title).toBe('Info');
     expect(res.viewport.width).toBeGreaterThan(0);
+  });
+
+  it('wait with count/stable polls until the count is stable', async () => {
+    document.body.innerHTML = '<div id="host"></div>';
+    const host = document.getElementById('host')!;
+    const timer = setTimeout(() => {
+      for (let i = 0; i < 3; i += 1) {
+        const el = document.createElement('div');
+        el.className = 'late';
+        host.appendChild(el);
+      }
+    }, 50);
+    try {
+      const res = (await executeDomAction(
+        'wait',
+        { selector: '.late', count: 3, stableMs: 100 },
+        document,
+        1,
+        0,
+      )) as { matched?: number; stable?: boolean };
+      expect(res.matched).toBe(3);
+      expect(res.stable).toBe(true);
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   it('wait with selector polls until the element appears', async () => {

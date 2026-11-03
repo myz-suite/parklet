@@ -50,12 +50,11 @@ const NEEDS_TARGET: ReadonlySet<Method> = new Set([
   'extract',
   'get-page-info',
   'dom-query',
-  'links',
-  'forms',
   'fetch',
   'search',
   'wait',
   'eval',
+  'close-tab',
 ]);
 
 /** 携带 URL 的命令：server 层做第一道 host 白名单检查。 */
@@ -155,7 +154,13 @@ export class Router {
     // 5. 目标解析：显式 tabId > 当前目标 tab > 最近激活 tab
     let tabId: number | undefined;
     if (NEEDS_TARGET.has(req.method) || req.method === 'goto') {
-      tabId = req.tabId ?? this.deps.target.get() ?? this.deps.hub.getLatestTabId();
+      const explicitParamsTabId =
+        req.method === 'close-tab' ? (params as { tabId?: number }).tabId : undefined;
+      tabId =
+        req.tabId ??
+        explicitParamsTabId ??
+        this.deps.target.get() ??
+        this.deps.hub.getLatestTabId();
       if (tabId === undefined && NEEDS_TARGET.has(req.method)) {
         this.deps.ledger.record({
           ...base,
@@ -210,7 +215,12 @@ export class Router {
     }
 
     const { tabId: resTabId, context } = res.result;
-    if (resTabId !== undefined) this.deps.target.set(resTabId);
+    if (req.method === 'close-tab') {
+      const closedId = (params as { tabId?: number }).tabId ?? wireReq.tabId;
+      if (closedId !== undefined) this.deps.target.clearIf(closedId);
+    } else if (resTabId !== undefined) {
+      this.deps.target.set(resTabId);
+    }
 
     const finalRes: Response = {
       id: res.id,
@@ -256,6 +266,7 @@ export class Router {
         data: {
           extensionConnected: this.deps.hub.isOnline(),
           currentTabId: this.deps.target.get(),
+          latestTabId: this.deps.hub.getLatestTabId(),
           config: {
             bind: config.bind,
             port: config.port,

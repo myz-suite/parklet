@@ -6,9 +6,11 @@ import type {
   ContextSnapshot,
   DomNode,
   ExtractResult,
+  FieldSpec,
   PageSnapshot,
   Viewport,
 } from '@parklet/protocol';
+import { collectForms, collectLinks } from './collect.js';
 
 /** defuddle 以 CJS/UMD 发布（module.exports = 类），NodeNext 下默认导入类型退化为命名空间，这里显式收窄。 */
 interface ArticleParseResult {
@@ -148,7 +150,8 @@ export function buildPageSnapshot(
 // ---------------------------------------------------------------------------
 
 export interface ExtractOptions {
-  mode?: 'text' | 'structured' | 'html';
+  mode?: 'text' | 'structured' | 'html' | 'links' | 'forms';
+  fields?: FieldSpec[];
   article?: boolean;
   selector?: string;
   offset?: number;
@@ -277,19 +280,105 @@ function stripExcluded(el: Element, exclude: string | undefined): string {
   return clone.outerHTML;
 }
 
-/** extract 命令入口：按 params 分发 text / structured / html / article。 */
+function isExcluded(el: Element, root: Element, exclude: string | undefined): boolean {
+  if (exclude === undefined) return false;
+  let cur: Element | null = el;
+  while (cur !== null) {
+    if (cur.matches(exclude)) return true;
+    if (cur === root) break;
+    cur = cur.parentElement;
+  }
+  return false;
+}
+
+function fieldText(el: Element): string {
+  const inner = (el as HTMLElement).innerText;
+  const raw = typeof inner === 'string' && inner.length > 0 ? inner : (el.textContent ?? '');
+  return raw.replace(/\s+/g, ' ').trim();
+}
+
+function findFieldElement(row: Element, spec: FieldSpec): Element | null {
+  const selectors = [spec.selector, ...(spec.alternatives ?? [])];
+  for (const selector of selectors) {
+    const matches = Array.from(row.querySelectorAll(selector));
+    if (row.matches(selector)) matches.unshift(row);
+    if (matches.length > 0) {
+      return matches.find(isVisible) ?? matches[0]!;
+    }
+  }
+  return null;
+}
+
+function fieldValue(el: Element, attr: string | undefined, doc: Document): string | null {
+  if (attr === undefined || attr === 'text') return fieldText(el);
+  const raw = el.getAttribute(attr);
+  if (raw === null) return null;
+  if (attr === 'href' || attr === 'src') {
+    try {
+      return new URL(raw, doc.baseURI).href;
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
+function extractFields(doc: Document, params: ExtractOptions): ExtractResult {
+  const selector = params.selector;
+  if (selector === undefined) {
+    throw Object.assign(new Error('extract --fields requires --selector'), {
+      code: 'INVALID_PARAMS',
+    });
+  }
+  let rows = Array.from(doc.querySelectorAll(selector));
+  if (params.visibleOnly === true) rows = rows.filter(isVisible);
+  rows = rows.filter((row) => !isExcluded(row, doc.body, params.exclude));
+
+  const total = rows.length;
+  const sliced = sliceList(rows, params.offset, params.limit);
+  const fields = params.fields ?? [];
+  const items = sliced.map((row) => {
+    const record: Record<string, string | null> = {};
+    for (const spec of fields) {
+      const el = findFieldElement(row, spec);
+      record[spec.name] =
+        el === null || isExcluded(el, row, params.exclude) ? null : fieldValue(el, spec.attr, doc);
+    }
+    return record;
+  });
+  return {
+    mode: 'fields',
+    items,
+    total,
+    ...(params.offset !== undefined ? { offset: params.offset } : {}),
+    ...(params.limit !== undefined ? { limit: params.limit } : {}),
+  };
+}
+
+/** extract 命令入口：按 params 分发 fields / text / structured / html / article。 */
 export function extractPage(
   doc: Document,
   params: ExtractOptions,
   tabId: number,
   navId: number,
 ): ExtractResult {
+  if (params.fields !== undefined) {
+    return extractFields(doc, params);
+  }
   if (params.article === true) {
     return extractArticle(doc, params.selector);
   }
 
   const mode = params.mode ?? 'text';
   const exclude = params.exclude;
+
+  if (mode === 'links') {
+    return { mode: 'links', ...collectLinks(doc, params as Record<string, unknown>) };
+  }
+  if (mode === 'forms') {
+    return { mode: 'forms', ...collectForms(doc, params as Record<string, unknown>) };
+  }
+
   const matched =
     params.selector !== undefined ? Array.from(doc.querySelectorAll(params.selector)) : [doc.body];
 

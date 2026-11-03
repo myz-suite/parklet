@@ -38,7 +38,7 @@ The common `result` fields carry addressing and continuity information; `data` h
 }
 ```
 
-> `unreadCount` (optional) is attached by the server's **HTTP** `/api/command` response only, counting cached `tab.created`/`tab.removed` events since the last `plt events` / `GET /api/events`. The CLI prints `N new events, run \`plt events\`` when non-zero. The WS responses to the extension do not carry it.
+> `unreadCount` (optional) is attached by the server's **HTTP** `/api/command` response only, counting cached `tab.created`/`tab.removed` events since the last `plt events` / `GET /api/events`. The CLI no longer prints an events reminder after every command; run `plt events` explicitly. The WS responses to the extension do not carry it.
 
 ### Response (failure)
 
@@ -92,7 +92,7 @@ Write-access markers are advisory (audit/logging): `always` = write operation; `
 | Command      | Params                                                                                                          | Returns data               | Write  |
 | ------------ | --------------------------------------------------------------------------------------------------------------- | -------------------------- | ------ |
 | `click`      | `selector` (CSS)                                                                                                | `{ element: ElementInfo }` | always |
-| `click-text` | `text` (visible text, fuzzy match + dedup)                                                                      | `{ element }`              | always |
+| `click-text` | `text`, `within?`, `role?`, `exact?`, `nth?` (only actionable elements; pure text is ignored)                   | `{ element }`              | always |
 | `fill`       | `selector`, `value` (whole-value replace; selector may point at a label/container and is resolved to its input) | `{ element }`              | always |
 | `type`       | `selector`, `text` (per keystroke; selector resolved to its input)                                              | `{ element }`              | always |
 | `press`      | `selector?`, `key` (Playwright-style combo, e.g. `Control+c`)                                                   | `{ element }`              | always |
@@ -104,29 +104,31 @@ Write-access markers are advisory (audit/logging): `always` = write operation; `
 
 ### Scroll / View
 
-| Command      | Params                                                                   | Returns data               | Write  |
-| ------------ | ------------------------------------------------------------------------ | -------------------------- | ------ |
-| `scroll`     | `direction?` (up/down/top/bottom), `amount?`, `selector?` (at least one) | `{ viewport }`             | always |
-| `scroll-to`  | `selector`                                                               | `{ element }`              | always |
-| `screenshot` | `format?` (png/jpeg), `fullPage?`, `selector?` (element crop), `path?`   | `{ data?: base64, path? }` | never  |
+| Command      | Params                                                                                                              | Returns data                                                                                      | Write  |
+| ------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------ |
+| `scroll`     | `by?` (px, ±), `to?` (top/bottom), `selector?`, `smooth?`, `settle?`, `focus?`, `allowNoop?` (`by`/`to` 二选一必填) | `{ target, before, after, delta, atTop, atBottom, settled, visibilityState, viewport, warning? }` | always |
+| `scroll-to`  | `selector`, `smooth?`, `settle?`, `focus?`                                                                          | `{ element, before, after, delta, settled, … }`                                                   | always |
+| `screenshot` | `format?` (png/jpeg), `selector?` (element crop), `restoreFocus?`, `path?`                                          | `{ data?: base64, path? }`                                                                        | never  |
 
 > `scroll` without `selector` scrolls the page. **With `selector` it scrolls inside that element** (its `overflow` content, e.g. a lazy-loading list) — it does not move the page. Use `scroll-to <selector>` to bring an element into the page viewport.
+>
+> Default scrolling is instant (`auto`) and waits for the position to settle. `delta=0` returns `NO_EFFECT` unless `allowNoop=true`. If the tab is in the background, the result includes `warning: "BACKGROUND_TAB"`; pass `focus=true` to activate it first (activation also changes the current tab).
 
-> Element screenshots (`selector`) require the target tab to be the active tab of its window; otherwise `TAB_NOT_ACTIVE`. The element is scrolled (instantly) into view if needed and the visible part is cropped (`devicePixelRatio`/zoom aware). If the tab is not active, activate it first (`plt tab <id>`) or omit `selector`.
+> Element screenshots (`selector`) auto-activate the target tab; pass `restoreFocus=true` to switch back afterwards. The element is scrolled (instantly) into view if needed and the visible part is cropped (`devicePixelRatio`/zoom aware).
 
 ### Extraction
 
-| Command         | Params                                           | Returns data                                              | Write |
-| --------------- | ------------------------------------------------ | --------------------------------------------------------- | ----- |
-| `extract`       | see below (text / structured / html / article)   | discriminated union by result `mode`                      | never |
-| `get-page-info` | —                                                | `{ url, title, viewport, scrollY }`                       | never |
-| `dom-query`     | `selector?` / `text?` (at least one), `limit?`   | `{ matches: [{ tag, class?, id?, text?, box? }], total }` | never |
-| `links`         | `selector?`, `offset?`, `limit?`, `visibleOnly?` | `{ links, total, offset?, limit?, truncated? }`           | never |
-| `forms`         | `selector?`, `offset?`, `limit?`, `visibleOnly?` | `{ forms, total, offset?, limit?, truncated? }`           | never |
+| Command         | Params                                                                                                                          | Returns data                                                                                                   | Write |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----- |
+| `extract`       | `mode?` (text/structured/html/links/forms), `fields?`, `selector?`, `offset?`, `limit?`, `visibleOnly?`, `exclude?`, `article?` | discriminated union by result `mode`                                                                           | never |
+| `get-page-info` | `selector?`                                                                                                                     | `{ url, title, viewport, scrollY, readyState, visibilityState, activeElement?, selection, scroll, selector? }` | never |
+| `dom-query`     | `selector?` / `text?` (at least one), `limit?`                                                                                  | `{ matches: [{ tag, class?, id?, text?, box? }], total }`                                                      | never |
 
-`links` enumerates visible anchors and **groups them by absolute `href`**; each `LinkInfo` carries `texts[]` (DOM order, deduped) and `count` (occurrences). `javascript:` hrefs, empty hrefs and pure `#` anchors are dropped. Pagination slices the **href groups**; `total` is the number of groups.
+`extract --mode links` enumerates visible anchors and **groups them by absolute `href`**; each `LinkInfo` carries `texts[]` (DOM order, deduped) and `count` (occurrences). `javascript:` hrefs, empty hrefs and pure `#` anchors are dropped. Pagination slices the **href groups**; `total` is the number of groups. `--selector` scopes the query; `--all` includes invisible links.
 
-`forms` enumerates visible `input`/`select`/`textarea`/`button` controls and **groups them by form `action`/`method`/`target`** (controls not owned by a `<form>` form an `action`-less group). Fields include `tag`/`type`/`name`/`value`/`labels` (`label[for]` > wrapping label > `aria-label` > `placeholder`), plus `checked`/`selected`/`disabled`/`required`/`id`. `input[type=password]` values are masked as `********`. Pagination slices the **fields** (flat across groups); `total` is the number of fields, and each group carries only the fields falling inside `[offset, offset+limit)`.
+`extract --mode forms` enumerates visible `input`/`select`/`textarea`/`button` controls and **groups them by form `action`/`method`/`target`** (controls not owned by a `<form>` form an `action`-less group). Fields include `tag`/`type`/`name`/`value`/`labels` (`label[for]` > wrapping label > `aria-label` > `placeholder`), plus `checked`/`selected`/`disabled`/`required`/`id`. `input[type=password]` values are masked as `********`. Pagination slices the **fields** (flat across groups); `total` is the number of fields, and each group carries only the fields falling inside `[offset, offset+limit)`. `--selector` scopes the query; `--all` includes invisible fields.
+
+`extract --fields "name=css[@attr][|fallback],..."` returns `{ mode:'fields', items, total }`; each row is a record with `null` for missing fields. `@href`/`@src` resolve to absolute URLs. Use `--fields-file <json>` for complex selectors. `fields` is mutually exclusive with `mode`/`article` and **requires `selector`** (the row selector); omitting it returns `INVALID_PARAMS`.
 
 Both default to `visibleOnly: true` (pass `false` to include invisible items) and share a collection cap (`truncated: true` when hit) applied **before** paging.
 
@@ -149,6 +151,29 @@ type ExtractResult =
   | { mode: 'text'; texts: string[]; total: number; offset?; limit? } // with selector, per first-level element
   | { mode: 'structured'; nodes: DomNode[]; total: number; offset?; limit?; truncated?: boolean } // DOM tree (maxNodes=500 budget, BFS truncation)
   | { mode: 'html'; items: string[]; total: number; offset?; limit? } // outerHTML per matched element (no truncation)
+  | {
+      mode: 'fields';
+      items: Array<Record<string, string | null>>;
+      total: number;
+      offset?: number;
+      limit?: number;
+    }
+  | {
+      mode: 'links';
+      links: LinkInfo[];
+      total: number;
+      offset?: number;
+      limit?: number;
+      truncated?: boolean;
+    }
+  | {
+      mode: 'forms';
+      forms: FormInfo[];
+      total: number;
+      offset?: number;
+      limit?: number;
+      truncated?: boolean;
+    }
   | {
       mode: 'article';
       content: string;
@@ -191,9 +216,9 @@ For selector-based results, `total` is the number of first-level elements (after
 
 ### Waiting
 
-| Command | Params                                                                             | Returns data | Write |
-| ------- | ---------------------------------------------------------------------------------- | ------------ | ----- |
-| `wait`  | `ms?`, `selector?` (until visible), `condition?` (networkidle/load) (at least one) | —            | never |
+| Command | Params                                                                                                                                                                                   | Returns data                     | Write |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----- |
+| `wait`  | `ms?`, `selector?`, `count?`, `stableMs?`, `condition?` (networkidle/load/content); at least one of `ms`/`selector`/`condition`; `selector` XOR `condition`; `count` requires `selector` | `{ matched?, waitedMs, stable }` | never |
 
 ### Server state
 
@@ -232,8 +257,8 @@ For selector-based results, `total` is the number of first-level elements (after
 | `EXTENSION_OFFLINE` / `EXTENSION_NO_TAB`                                      | extension not connected / no operable tab   |
 | `TAB_CLOSED`                                                                  | the targeted / current tab no longer exists |
 | `TIMEOUT`                                                                     | command timed out (default 30 s)            |
+| `NO_EFFECT`                                                                   | scroll produced no delta (use `allowNoop`)  |
 | `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS`                                       | locator matched nothing / several elements  |
-| `TAB_NOT_ACTIVE`                                                              | element screenshot on a non-active tab      |
 | `URL_INVALID` / `HOST_NOT_ALLOWED`                                            | invalid URL / host not in allowlist         |
 | `EVAL_DISABLED`                                                               | eval not enabled                            |
 | `NOT_SERIALIZABLE`                                                            | eval result cannot round-trip through JSON  |

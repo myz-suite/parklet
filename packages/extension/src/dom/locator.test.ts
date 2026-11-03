@@ -82,4 +82,67 @@ describe('findByText', () => {
     const { element } = findByText(document, 'Visible text');
     expect(element.tagName.toLowerCase()).toBe('p');
   });
+
+  it('actionableOnly ignores matching text containers', () => {
+    setup(
+      '<p>Following this thread is useful</p><button id="follow">Following</button>' +
+        '<p>Following</p>',
+    );
+    const { element } = findByText(document, 'Following', { actionableOnly: true });
+    expect(element.id).toBe('follow');
+  });
+
+  it('actionableOnly reports ambiguity between multiple buttons', () => {
+    setup('<button id="a">Same</button><button id="b">Same</button>');
+    expect(() => findByText(document, 'Same', { actionableOnly: true })).toThrowError(
+      /multiple elements/,
+    );
+  });
+
+  it('actionableOnly rejects pure text', () => {
+    setup('<p>Only text</p>');
+    expect(() => findByText(document, 'Only text', { actionableOnly: true })).toThrowError(
+      /no actionable/,
+    );
+  });
+
+  it('deduplicates candidates from nested within roots', () => {
+    setup('<div id="outer"><div id="inner"><button id="only">Save</button></div></div>');
+    const { element } = findByText(document, 'Save', {
+      within: 'div',
+      actionableOnly: true,
+    });
+    expect(element.id).toBe('only');
+  });
+
+  it('supports within, exact, role and nth', () => {
+    setup(
+      '<div id="scope"><button id="a">Open</button><button id="b">Open file</button></div>' +
+        '<button id="outside">Open</button>',
+    );
+    const within = findByText(document, 'Open', {
+      actionableOnly: true,
+      within: '#scope',
+    });
+    expect(within.element.id).toBe('a');
+    const exact = findByText(document, 'Open', {
+      actionableOnly: true,
+      within: '#scope',
+      exact: true,
+    });
+    expect(exact.element.id).toBe('a');
+    const nth = findByText(document, 'Open', {
+      actionableOnly: true,
+      within: '#scope',
+      nth: 1,
+    });
+    expect(nth.element.id).toBe('b');
+    const role = findByText(document, 'Open', {
+      actionableOnly: true,
+      within: '#scope',
+      role: 'button',
+      nth: 1,
+    });
+    expect(role.element.id).toBe('b');
+  });
 });

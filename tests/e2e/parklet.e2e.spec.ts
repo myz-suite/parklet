@@ -24,23 +24,26 @@ export interface Session {
   context: BrowserContext;
   sw: Worker;
   server: RunningServer;
+  /** 本地夹具站点（source of truth；不依赖任何外部站点） */
+  web: { url: string; stop: () => void };
   /** 扩展视角的目标 chrome tabId（create-tab 返回，命令显式携带） */
   tabId: number;
 }
 
-// 扩展会话 fixture：每次 launch 独立 profile 并自动配对、create-tab 开 example.com，
-// 用例结束自动关闭 context 并清理 profile（避免 chromium 进程泄漏导致后续用例不稳定）。
+// 扩展会话 fixture：每次 launch 独立 profile 并自动配对、create-tab 开本地夹具首页，
+// 用例结束自动关闭 context、web server 并清理 profile（避免 chromium 进程泄漏导致后续用例不稳定）。
 export const test = base.extend<{ session: Session }>({
   session: [
     async ({}, use) => {
       const server = await startServer({ enableEval: true });
+      const web = await startTestWeb();
       let session: Session;
       try {
         const { context, sw, profileDir } = await launchExtensionContext(server.url, server.token);
         try {
           const before = new Set(context.pages());
           const created = (await command(server.url, 'create-tab', {
-            url: 'https://example.com',
+            url: `${web.url}/`,
           })) as { data?: { tab?: { id?: number } } };
           const tabId = created.data?.tab?.id;
           if (typeof tabId !== 'number') throw new Error('create-tab did not return a tab id');
@@ -55,7 +58,7 @@ export const test = base.extend<{ session: Session }>({
           }
           if (page === undefined) throw new Error('create-tab did not open a page');
           await page.waitForLoadState('domcontentloaded').catch(() => {});
-          session = { serverUrl: server.url, page, context, sw, server, tabId };
+          session = { serverUrl: server.url, page, context, sw, server, web, tabId };
         } finally {
           // 若 fixture 内初始化失败也要关浏览器
           if (!session) await context.close().catch(() => {});
@@ -64,6 +67,7 @@ export const test = base.extend<{ session: Session }>({
         await context.close().catch(() => {});
         rmSync(profileDir, { recursive: true, force: true });
       } finally {
+        web.stop();
         server.stop();
       }
     },
@@ -79,29 +83,26 @@ test('扩展自动配对并保持连接', async ({ session }) => {
   expect(ping.data?.extensionConnected).toBe(true);
 });
 
-test('goto 驱动真实页面并返回 context 快照', async ({ session }) => {
-  const goto = (await command(
-    session.serverUrl,
-    'goto',
-    { url: 'https://www.iana.org/help/example-domains' },
-    { tabId: session.tabId },
-  )) as { context?: { url?: string; navId?: number } };
+test('goto 驱动本地页面并返回 context 快照', async ({ session }) => {
+  const url = `${session.web.url}/target-page`;
+  const goto = (await command(session.serverUrl, 'goto', { url }, { tabId: session.tabId })) as {
+    context?: { url?: string; navId?: number };
+  };
 
-  expect(goto.context?.url).toContain('iana.org');
+  expect(goto.context?.url).toBe(url);
   expect(goto.context?.navId).toBeGreaterThanOrEqual(1);
-  await session.page.waitForURL('https://www.iana.org/**', { timeout: 20_000 });
-  expect(session.page.url()).toContain('iana.org');
+  await session.page.waitForURL(url, { timeout: 20_000 });
+  expect(session.page.url()).toBe(url);
 });
 
 test('当前 tab 连续性：后续命令复用同一目标并感知导航', async ({ session }) => {
   // 首次 goto 设置当前目标 tab
-  const goto = (await command(
-    session.serverUrl,
-    'goto',
-    { url: 'https://example.com' },
-    { tabId: session.tabId },
-  )) as { tabId?: number; context?: { url?: string } };
-  await session.page.waitForURL('https://example.com/**', { timeout: 20_000 });
+  const url = `${session.web.url}/list`;
+  const goto = (await command(session.serverUrl, 'goto', { url }, { tabId: session.tabId })) as {
+    tabId?: number;
+    context?: { url?: string };
+  };
+  await session.page.waitForURL(url, { timeout: 20_000 });
   expect(goto.tabId).toBe(session.tabId);
 
   // 后续命令不带 tabId：走当前目标 tab（连续性），context 应一致
@@ -111,8 +112,58 @@ test('当前 tab 连续性：后续命令复用同一目标并感知导航', asy
     data?: { snapshot?: { visibleText?: string } };
   };
   expect(extract.tabId).toBe(goto.tabId);
-  expect(extract.context?.url).toContain('example.com');
-  expect(extract.data?.snapshot?.visibleText).toContain('Example Domain');
+  expect(extract.context?.url).toBe(url);
+  expect(extract.data?.snapshot?.visibleText).toContain('Item 0');
+});
+
+test('tab：激活即 current；tab-close 清除并回退', async ({ session }) => {
+  const web = await startTestWeb();
+  let otherTabId: number | undefined;
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/list` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/list`, { timeout: 20_000 });
+
+    const created = (await command(session.serverUrl, 'create-tab', {
+      url: `${web.url}/query`,
+    })) as { data?: { tab?: { id?: number } } };
+    otherTabId = created.data?.tab?.id;
+    expect(otherTabId).toBeDefined();
+
+    const useA = await runCli(session.serverUrl, ['tab', String(session.tabId)]);
+    expect(useA.code).toBe(0);
+    const onA = (await command(session.serverUrl, 'get-page-info', {})) as {
+      data?: { url?: string };
+    };
+    expect(onA.data?.url).toBe(`${web.url}/list`);
+
+    const useB = await runCli(session.serverUrl, ['tab', String(otherTabId)]);
+    expect(useB.code).toBe(0);
+    const onB = (await command(session.serverUrl, 'get-page-info', {})) as {
+      data?: { url?: string };
+    };
+    expect(onB.data?.url).toBe(`${web.url}/query`);
+
+    const close = await runCli(session.serverUrl, ['tab-close', String(otherTabId)]);
+    expect(close.code).toBe(0);
+    const afterClose = (await command(session.serverUrl, 'get-page-info', {})) as {
+      data?: { url?: string };
+    };
+    expect(afterClose.data?.url).toBe(`${web.url}/list`);
+
+    const conflict = await runCli(session.serverUrl, [
+      '--tab',
+      String(session.tabId),
+      'tab-close',
+      String(session.tabId),
+    ]);
+    expect(conflict.code).toBe(2);
+    expect(conflict.stderr).toMatch(/not both/);
+  } finally {
+    if (otherTabId !== undefined) {
+      await command(session.serverUrl, 'close-tab', { tabId: otherTabId }).catch(() => {});
+    }
+    web.stop();
+  }
 });
 
 test('点击可见文本可真实导航（navId 递增）', async ({ session }) => {
@@ -324,6 +375,177 @@ test('extract structured 分页：返回 total 并回显 offset/limit', async ({
   }
 });
 
+test('extract --fields：输出结构化记录（text / @attr / 绝对 URL / null）', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/list` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/list`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'extract',
+      {
+        selector: '#list li',
+        fields: [
+          { name: 'href', selector: 'a', attr: 'href' },
+          { name: 'text', selector: 'a' },
+          { name: 'missing', selector: '.nope' },
+        ],
+        limit: 2,
+      },
+      { tabId: session.tabId },
+    )) as {
+      data?: {
+        mode?: string;
+        items?: Array<Record<string, string | null>>;
+        total?: number;
+      };
+    };
+    expect(res.data?.mode).toBe('fields');
+    expect(res.data?.total).toBe(25);
+    expect(res.data?.items).toEqual([
+      { href: `${web.url}/item/0`, text: 'Item 0', missing: null },
+      { href: `${web.url}/item/1`, text: 'Item 1', missing: null },
+    ]);
+
+    const cli = await runCli(session.serverUrl, [
+      '--tab',
+      String(session.tabId),
+      'extract',
+      '--selector',
+      '#list li',
+      '--fields',
+      'href=a@href,text=a',
+      '--limit',
+      '1',
+      '--json',
+    ]);
+    expect(cli.code).toBe(0);
+    const parsed = JSON.parse(cli.stdout.trim()) as {
+      data?: { items?: Array<Record<string, string | null>> };
+    };
+    expect(parsed.data?.items).toEqual([{ href: `${web.url}/item/0`, text: 'Item 0' }]);
+  } finally {
+    web.stop();
+  }
+});
+
+test('wait：等待元素数量稳定 / 内容就绪', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(
+      session.serverUrl,
+      'goto',
+      { url: `${web.url}/spa?n=10&delay=300` },
+      { tabId: session.tabId },
+    );
+    await session.page.waitForURL(`${web.url}/spa?n=10&delay=300`, { timeout: 20_000 });
+    const wait = (await command(
+      session.serverUrl,
+      'wait',
+      { selector: 'article', count: 10, stableMs: 300 },
+      { tabId: session.tabId },
+    )) as { data?: { matched?: number; waitedMs?: number; stable?: boolean } };
+    expect(wait.data?.matched).toBe(10);
+    expect(wait.data?.stable).toBe(true);
+
+    const content = (await command(
+      session.serverUrl,
+      'wait',
+      { condition: 'content', stableMs: 200 },
+      { tabId: session.tabId },
+    )) as { data?: { stable?: boolean; waitedMs?: number } };
+    expect(content.data?.stable).toBe(true);
+  } finally {
+    web.stop();
+  }
+});
+
+test('collect --repeat：固定轮次采集虚拟列表并去重', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(
+      session.serverUrl,
+      'goto',
+      { url: `${web.url}/feed?n=60` },
+      { tabId: session.tabId },
+    );
+    await session.page.waitForURL(`${web.url}/feed?n=60`, { timeout: 20_000 });
+    await expect
+      .poll(async () => session.page.$$eval('[data-testid="tweet"]', (els) => els.length))
+      .toBeGreaterThan(0);
+
+    const res = await runCli(session.serverUrl, [
+      '--tab',
+      String(session.tabId),
+      'collect',
+      "article[data-testid='tweet']",
+      '--fields',
+      'id=article@data-id,author=.author,datetime=time@datetime,text=.text',
+      '--repeat',
+      '3',
+      '--scroll-by',
+      '500',
+      '--json',
+    ]);
+    expect(res.code).toBe(0);
+    const report = JSON.parse(res.stdout.trim()) as {
+      total?: number;
+      scrolls?: number;
+      duplicates?: number;
+      zeroNewSteps?: number;
+      stoppedReason?: string;
+      steps?: Array<{ newItems: number; totalItems: number }>;
+      observed?: { newest?: string; oldest?: string };
+    };
+    expect(report.scrolls).toBe(3);
+    expect(report.steps).toHaveLength(3);
+    expect(report.stoppedReason).toBe('repeat-completed');
+    expect(report.total).toBeGreaterThan(10);
+    expect(report.duplicates).toBeGreaterThan(0);
+    expect(report.zeroNewSteps).toBe(0);
+    expect(report.observed?.newest).toBeDefined();
+    expect(report.observed?.oldest).toBeDefined();
+  } finally {
+    web.stop();
+  }
+});
+
+test('collect：重复渲染时按 id 去重', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(
+      session.serverUrl,
+      'goto',
+      { url: `${web.url}/feed?n=40&dup=1` },
+      { tabId: session.tabId },
+    );
+    await session.page.waitForURL(`${web.url}/feed?n=40&dup=1`, { timeout: 20_000 });
+    const res = await runCli(session.serverUrl, [
+      '--tab',
+      String(session.tabId),
+      'collect',
+      "article[data-testid='tweet']",
+      '--fields',
+      'id=article@data-id,text=.text',
+      '--repeat',
+      '2',
+      '--scroll-by',
+      '500',
+      '--json',
+    ]);
+    expect(res.code).toBe(0);
+    const report = JSON.parse(res.stdout.trim()) as {
+      items?: Array<{ id: string | null }>;
+      duplicates?: number;
+    };
+    const ids = (report.items ?? []).map((item) => item.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(report.duplicates).toBeGreaterThan(0);
+  } finally {
+    web.stop();
+  }
+});
+
 test('press：ArrowDown(keyCode) 驱动页面 JS + Enter 触发表单提交', async ({ session }) => {
   const web = await startTestWeb();
   try {
@@ -425,6 +647,72 @@ test('screenshot CLI：未指定 --path 时默认落盘并打印路径', async (
   }
 });
 
+test('page-info：返回状态/滚动/activeElement/selector 计数', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/query` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/query`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'get-page-info',
+      { selector: '.item' },
+      { tabId: session.tabId },
+    )) as {
+      data?: {
+        readyState?: string;
+        visibilityState?: string;
+        selection?: string;
+        scroll?: { y: number; scrollHeight: number; clientHeight: number };
+        activeElement?: { tag: string };
+        selector?: { count: number };
+      };
+    };
+    expect(res.data?.readyState).toBe('complete');
+    expect(res.data?.visibilityState).toBe('visible');
+    expect(res.data?.selection).toBe('');
+    expect(res.data?.scroll?.clientHeight).toBeGreaterThan(0);
+    expect(res.data?.activeElement?.tag).toBeDefined();
+    expect(res.data?.selector?.count).toBe(2);
+  } finally {
+    web.stop();
+  }
+});
+
+test('screenshot --selector：自动激活非 active tab', async ({ session }) => {
+  const web = await startTestWeb();
+  let otherTabId: number | undefined;
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/query` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/query`, { timeout: 20_000 });
+    const created = (await command(session.serverUrl, 'create-tab', {
+      url: `${web.url}/tall`,
+    })) as { data?: { tab?: { id?: number } } };
+    otherTabId = created.data?.tab?.id;
+    expect(otherTabId).toBeDefined();
+    await new Promise((r) => setTimeout(r, 300));
+
+    const shot = (await command(
+      session.serverUrl,
+      'screenshot',
+      { selector: '#host' },
+      { tabId: session.tabId },
+    )) as { data?: { data?: string } };
+    expect(shot.data?.data).toBeDefined();
+    expect(Buffer.from(shot.data!.data!, 'base64').subarray(0, 8).toString('hex')).toBe(
+      '89504e470d0a1a0a',
+    );
+    const tabs = (await command(session.serverUrl, 'list-tabs', {}, {})) as {
+      data?: { tabs?: Array<{ id: number; active: boolean }> };
+    };
+    expect(tabs.data?.tabs?.find((t) => t.id === session.tabId)?.active).toBe(true);
+  } finally {
+    if (otherTabId !== undefined) {
+      await command(session.serverUrl, 'close-tab', { tabId: otherTabId }).catch(() => {});
+    }
+    web.stop();
+  }
+});
+
 test('截图返回 base64 PNG 数据', async ({ session }) => {
   const shot = (await command(session.serverUrl, 'screenshot', {}, { tabId: session.tabId })) as {
     data?: { data?: string };
@@ -434,6 +722,30 @@ test('截图返回 base64 PNG 数据', async ({ session }) => {
   expect(Buffer.from(shot.data!.data!, 'base64').subarray(0, 8).toString('hex')).toBe(
     '89504e470d0a1a0a',
   );
+});
+
+test('click-text：正文同名字符串不抢按钮', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(
+      session.serverUrl,
+      'goto',
+      { url: `${web.url}/mixed-text` },
+      { tabId: session.tabId },
+    );
+    await session.page.waitForURL(`${web.url}/mixed-text`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'click-text',
+      { text: 'Following' },
+      { tabId: session.tabId },
+    )) as { data?: { element?: { tag?: string; attrs?: Record<string, string> } } };
+    expect(res.data?.element?.tag).toBe('button');
+    expect(res.data?.element?.attrs?.id).toBe('follow');
+    expect(await session.page.textContent('#result')).toBe('clicked');
+  } finally {
+    web.stop();
+  }
 });
 
 test('fill + 点击提交：表单真实提交（受控输入事件链路）', async ({ session }) => {
@@ -489,53 +801,117 @@ test('页面上下文 fetch：本地 API 请求返回真实响应', async ({ ses
   }
 });
 
-test('scroll：滚动后 scrollY 真实变化', async ({ session }) => {
+test('scroll --by：返回真实 delta 且 scrollY 同步变化', async ({ session }) => {
   const web = await startTestWeb();
   try {
     await command(session.serverUrl, 'goto', { url: `${web.url}/tall` }, { tabId: session.tabId });
     await session.page.waitForURL(`${web.url}/tall`, { timeout: 20_000 });
-    await command(session.serverUrl, 'scroll', { direction: 'bottom' }, { tabId: session.tabId });
-    await new Promise((r) => setTimeout(r, 900)); // smooth 滚动落定
+    const res = (await command(
+      session.serverUrl,
+      'scroll',
+      { by: 850 },
+      { tabId: session.tabId },
+    )) as { data?: { before?: { y: number }; after?: { y: number }; delta?: { y: number } } };
+    expect(res.data?.delta?.y).toBeGreaterThanOrEqual(849);
+    expect(res.data?.delta?.y).toBeLessThanOrEqual(851);
     const info = (await command(
       session.serverUrl,
       'get-page-info',
       {},
       { tabId: session.tabId },
     )) as { data?: { scrollY?: number } };
-    expect(info.data?.scrollY).toBeGreaterThan(100);
+    expect(info.data?.scrollY).toBe(res.data?.after?.y);
   } finally {
     web.stop();
   }
 });
 
-test('links：按 href 分组并分页', async ({ session }) => {
+test('scroll --to：到底后再次滚动报 NO_EFFECT', async ({ session }) => {
+  const web = await startTestWeb();
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/tall` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/tall`, { timeout: 20_000 });
+    const res = (await command(
+      session.serverUrl,
+      'scroll',
+      { to: 'bottom' },
+      { tabId: session.tabId },
+    )) as { data?: { atBottom?: boolean } };
+    expect(res.data?.atBottom).toBe(true);
+    await expect(
+      command(session.serverUrl, 'scroll', { to: 'bottom' }, { tabId: session.tabId }),
+    ).rejects.toThrow(/NO_EFFECT/);
+    const allowed = (await command(
+      session.serverUrl,
+      'scroll',
+      { to: 'bottom', allowNoop: true },
+      { tabId: session.tabId },
+    )) as { data?: { delta?: { y: number } } };
+    expect(allowed.data?.delta?.y).toBe(0);
+  } finally {
+    web.stop();
+  }
+});
+
+test('extract --mode links：分组、分页与作用域', async ({ session }) => {
   const web = await startTestWeb();
   try {
     await command(session.serverUrl, 'goto', { url: `${web.url}/list` }, { tabId: session.tabId });
     await session.page.waitForURL(`${web.url}/list`, { timeout: 20_000 });
     const res = (await command(
       session.serverUrl,
-      'links',
-      { limit: 5 },
+      'extract',
+      { mode: 'links', limit: 5 },
       { tabId: session.tabId },
     )) as {
       data?: {
+        mode?: string;
         links?: Array<{ href: string; texts: string[]; count: number }>;
         total?: number;
         limit?: number;
       };
     };
+    expect(res.data?.mode).toBe('links');
     expect(res.data?.total).toBe(25);
     expect(res.data?.links).toHaveLength(5);
     expect(res.data?.limit).toBe(5);
     expect(res.data?.links?.[0]?.href).toMatch(/\/item\/0$/);
     expect(res.data?.links?.[0]?.texts).toContain('Item 0');
+
+    await command(session.serverUrl, 'goto', { url: `${web.url}/scope` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/scope`, { timeout: 20_000 });
+    const scoped = (await command(
+      session.serverUrl,
+      'extract',
+      { mode: 'links', selector: "div[role='tablist']" },
+      { tabId: session.tabId },
+    )) as { data?: { links?: Array<{ href: string }> } };
+    expect(scoped.data?.links?.map((l) => l.href)).toEqual([
+      `${web.url}/tab-1`,
+      `${web.url}/tab-2`,
+    ]);
+
+    const cli = await runCli(session.serverUrl, [
+      '--tab',
+      String(session.tabId),
+      'extract',
+      '--mode',
+      'links',
+      '--within',
+      "div[role='tablist']",
+      '--limit',
+      '1',
+      '--json',
+    ]);
+    expect(cli.code, cli.stderr).toBe(0);
+    const parsed = JSON.parse(cli.stdout.trim()) as { data?: { links?: unknown[] } };
+    expect(parsed.data?.links).toHaveLength(1);
   } finally {
     web.stop();
   }
 });
 
-test('forms：labels / password 脱敏 / 勾选态 / 分组', async ({ session }) => {
+test('extract --mode forms：labels / password 脱敏 / 勾选态 / 分组', async ({ session }) => {
   const web = await startTestWeb();
   try {
     await command(
@@ -547,8 +923,14 @@ test('forms：labels / password 脱敏 / 勾选态 / 分组', async ({ session }
       },
     );
     await session.page.waitForURL(`${web.url}/form-rich`, { timeout: 20_000 });
-    const res = (await command(session.serverUrl, 'forms', {}, { tabId: session.tabId })) as {
+    const res = (await command(
+      session.serverUrl,
+      'extract',
+      { mode: 'forms' },
+      { tabId: session.tabId },
+    )) as {
       data?: {
+        mode?: string;
         forms?: Array<{
           action?: string;
           method?: string;
@@ -557,6 +939,7 @@ test('forms：labels / password 脱敏 / 勾选态 / 分组', async ({ session }
         total?: number;
       };
     };
+    expect(res.data?.mode).toBe('forms');
     expect(res.data?.total).toBeGreaterThanOrEqual(6);
     const form = res.data?.forms?.[0];
     expect(form?.action).toBe('/submitted');
@@ -620,6 +1003,41 @@ test('eval：执行脚本返回序列化结果，不可序列化报 NOT_SERIALIZ
   }
 });
 
+test('scroll --focus：激活目标 tab 后再滚动', async ({ session }) => {
+  const web = await startTestWeb();
+  let otherTabId: number | undefined;
+  try {
+    await command(session.serverUrl, 'goto', { url: `${web.url}/tall` }, { tabId: session.tabId });
+    await session.page.waitForURL(`${web.url}/tall`, { timeout: 20_000 });
+
+    const created = (await command(session.serverUrl, 'create-tab', {
+      url: `${web.url}/tall`,
+    })) as { data?: { tab?: { id?: number } } };
+    otherTabId = created.data?.tab?.id;
+    expect(otherTabId).toBeDefined();
+    await command(session.serverUrl, 'activate-tab', { tabId: otherTabId! });
+    await new Promise((r) => setTimeout(r, 300));
+
+    const focused = (await command(
+      session.serverUrl,
+      'scroll',
+      { by: 200, focus: true },
+      { tabId: session.tabId },
+    )) as { data?: { delta?: { y: number } } };
+    expect(focused.data?.delta?.y).toBeGreaterThan(0);
+
+    const tabs = (await command(session.serverUrl, 'list-tabs', {}, {})) as {
+      data?: { tabs?: Array<{ id: number; active: boolean }> };
+    };
+    expect(tabs.data?.tabs?.find((t) => t.id === session.tabId)?.active).toBe(true);
+  } finally {
+    if (otherTabId !== undefined) {
+      await command(session.serverUrl, 'close-tab', { tabId: otherTabId }).catch(() => {});
+    }
+    web.stop();
+  }
+});
+
 test('scroll --selector：滚动内部容器触发懒加载', async ({ session }) => {
   const web = await startTestWeb();
   try {
@@ -635,10 +1053,9 @@ test('scroll --selector：滚动内部容器触发懒加载', async ({ session }
     await command(
       session.serverUrl,
       'scroll',
-      { selector: '#list', amount: 400 },
+      { selector: '#list', by: 400 },
       { tabId: session.tabId },
     );
-    await new Promise((r) => setTimeout(r, 700));
     const after = (await command(
       session.serverUrl,
       'extract',
@@ -696,19 +1113,34 @@ test('plt run：一次进程执行多条命令（JSON lines）', async ({ sessio
       [
         JSON.stringify({
           method: 'goto',
-          params: { url: `${web.url}/list` },
+          params: { url: '${base}/${suffix}' },
           tabId: session.tabId,
         }),
         JSON.stringify({
           method: 'extract',
           params: { mode: 'structured', selector: '#list', depth: 0 },
           tabId: session.tabId,
+          as: 'page',
+        }),
+        JSON.stringify({
+          method: 'wait',
+          params: { ms: '${page.total}' },
+          tabId: session.tabId,
         }),
       ].join('\n'),
     );
-    const res = await runCli(session.serverUrl, ['run', file, '--json']);
-    expect(res.code).toBe(0);
+    const res = await runCli(session.serverUrl, [
+      'run',
+      file,
+      '--var',
+      `base=${web.url}`,
+      '--var',
+      'suffix=list',
+      '--json',
+    ]);
+    expect(res.code, res.stderr).toBe(0);
     expect(res.stdout).toContain('"total"');
+    expect(res.stdout).toContain('"waitedMs"');
   } finally {
     rmSync(dir, { recursive: true, force: true });
     web.stop();
@@ -738,8 +1170,13 @@ test('scroll-to：把元素滚入视口', async ({ session }) => {
   try {
     await command(session.serverUrl, 'goto', { url: `${web.url}/tall` }, { tabId: session.tabId });
     await session.page.waitForURL(`${web.url}/tall`, { timeout: 20_000 });
-    await command(session.serverUrl, 'scroll-to', { selector: 'footer' }, { tabId: session.tabId });
-    await new Promise((r) => setTimeout(r, 900));
+    const res = (await command(
+      session.serverUrl,
+      'scroll-to',
+      { selector: 'footer' },
+      { tabId: session.tabId },
+    )) as { data?: { delta?: { y: number } } };
+    expect(res.data?.delta?.y).toBeGreaterThan(0);
     const info = (await command(
       session.serverUrl,
       'get-page-info',
@@ -768,6 +1205,20 @@ test('--json 输出可被严格 JSON.parse', async ({ session }) => {
     const parsed = JSON.parse(res.stdout.trim()) as { tabId?: number; data?: { texts?: string[] } };
     expect(typeof parsed.tabId).toBe('number');
     expect(Array.isArray(parsed.data?.texts)).toBe(true);
+    expect(res.stderr).toContain('📍');
+
+    const quiet = await runCli(session.serverUrl, [
+      '--tab',
+      String(session.tabId),
+      '--quiet',
+      'extract',
+      '--selector',
+      '#host',
+      '--json',
+    ]);
+    expect(quiet.code).toBe(0);
+    expect(quiet.stderr).toBe('');
+    expect(() => JSON.parse(quiet.stdout.trim())).not.toThrow();
   } finally {
     web.stop();
   }

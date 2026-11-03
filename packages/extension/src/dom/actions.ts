@@ -1,7 +1,13 @@
-import { findByCss, findByText, locate, toElementInfo, type Located } from './locator.js';
-import { collectForms, collectLinks } from './collect.js';
+import { findByCss, findByText, locate, roleOf, toElementInfo, type Located } from './locator.js';
 import { extractPage, getScrollY, getViewport, type ExtractOptions } from './snapshot.js';
-import type { DomQueryMatch, ElementInfo, SearchResult } from '@parklet/protocol';
+import type {
+  DomQueryMatch,
+  ElementInfo,
+  ScrollMetrics,
+  ScrollResult,
+  ScrollToResult,
+  SearchResult,
+} from '@parklet/protocol';
 
 /** DOM 层命令执行器：在页面上下文执行单个命令并返回命令特有结果。 */
 
@@ -346,27 +352,202 @@ function applyDefaultAction(
   }
 }
 
-/** 滚动元素自身的 overflow 内容（direction/amount），用于懒加载容器；不影响页面滚动。 */
-function scrollElementWithin(el: Element, params: Record<string, unknown>): void {
-  const target = el as HTMLElement;
-  const dir = params.direction !== undefined ? String(params.direction) : undefined;
-  const amount = params.amount !== undefined ? Number(params.amount) : undefined;
-  const step = amount ?? Math.round((target.clientHeight || window.innerHeight) * 0.8);
-  let delta: number;
-  switch (dir) {
-    case 'up':
-      delta = -step;
-      break;
-    case 'top':
-      delta = -target.scrollTop;
-      break;
-    case 'bottom':
-      delta = target.scrollHeight - target.clientHeight - target.scrollTop;
-      break;
-    default:
-      delta = step; // 'down' 或未给 direction：向下滚一屏/amount
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    // hidden documents pause rAF; always bound the wait with a timer.
+    setTimeout(finish, 50);
+    const raf = (
+      globalThis as typeof globalThis & {
+        requestAnimationFrame?: (cb: FrameRequestCallback) => number;
+      }
+    ).requestAnimationFrame;
+    if (typeof raf === 'function') raf(() => finish());
+  });
+}
+
+/** 等待滚动位置连续 2 帧不变；最多 maxMs，返回是否稳定。 */
+async function settleScroll(read: () => number, maxMs = 1000): Promise<boolean> {
+  const start = Date.now();
+  let last = read();
+  let stable = 0;
+  while (Date.now() - start < maxMs) {
+    await nextFrame();
+    const current = read();
+    if (Math.abs(current - last) < 1) {
+      stable += 1;
+      if (stable >= 2) return true;
+    } else {
+      stable = 0;
+      last = current;
+    }
   }
-  target.scrollBy({ top: delta, behavior: 'smooth' });
+  return false;
+}
+
+function visibilityOf(doc: Document): 'visible' | 'hidden' {
+  return doc.visibilityState === 'hidden' ? 'hidden' : 'visible';
+}
+
+function backgroundWarning(doc: Document): 'BACKGROUND_TAB' | undefined {
+  return visibilityOf(doc) === 'hidden' ? 'BACKGROUND_TAB' : undefined;
+}
+
+function pageMetrics(doc: Document): ScrollMetrics {
+  const el = doc.scrollingElement ?? doc.documentElement;
+  return {
+    scrollTop: el.scrollTop,
+    scrollLeft: el.scrollLeft,
+    scrollHeight: el.scrollHeight,
+    scrollWidth: el.scrollWidth,
+    clientHeight: el.clientHeight || window.innerHeight,
+    clientWidth: el.clientWidth || window.innerWidth,
+  };
+}
+
+function elementMetrics(el: HTMLElement): ScrollMetrics {
+  return {
+    scrollTop: el.scrollTop,
+    scrollLeft: el.scrollLeft,
+    scrollHeight: el.scrollHeight,
+    scrollWidth: el.scrollWidth,
+    clientHeight: el.clientHeight,
+    clientWidth: el.clientWidth,
+  };
+}
+
+function noEffectError(result: ScrollResult): never {
+  throw Object.assign(
+    new Error(`scroll had no effect (atTop=${result.atTop}, atBottom=${result.atBottom})`),
+    {
+      code: 'NO_EFFECT',
+      data: {
+        before: result.before,
+        after: result.after,
+        atTop: result.atTop,
+        atBottom: result.atBottom,
+      },
+    },
+  );
+}
+
+function assertEffect(result: ScrollResult, allowNoop: boolean): ScrollResult {
+  if (allowNoop) return result;
+  if (result.delta.x === 0 && result.delta.y === 0) noEffectError(result);
+  return result;
+}
+
+async function scrollPage(doc: Document, params: Record<string, unknown>): Promise<ScrollResult> {
+  const before = { x: window.scrollX, y: window.scrollY };
+  const metricsBefore = pageMetrics(doc);
+  let delta = 0;
+  if (params.to === 'top') delta = -before.y;
+  else if (params.to === 'bottom') {
+    delta = metricsBefore.scrollHeight - metricsBefore.clientHeight - before.y;
+  } else {
+    delta = Number(params.by ?? 0);
+  }
+  if (params.to === 'bottom' && delta < 0) delta = 0;
+
+  window.scrollBy({
+    top: delta,
+    behavior: params.smooth === true ? 'smooth' : 'auto',
+  });
+  const settled = params.settle === false ? false : await settleScroll(() => window.scrollY, 1000);
+  const after = { x: window.scrollX, y: window.scrollY };
+  const metrics = pageMetrics(doc);
+  const result: ScrollResult = {
+    target: 'page',
+    before,
+    after,
+    delta: { x: after.x - before.x, y: after.y - before.y },
+    atTop: after.y <= 0,
+    atBottom: after.y + window.innerHeight >= metrics.scrollHeight - 1,
+    settled,
+    visibilityState: visibilityOf(doc),
+    viewport: getViewport(),
+  };
+  const warning = backgroundWarning(doc);
+  if (warning !== undefined) result.warning = warning;
+  return assertEffect(result, params.allowNoop === true);
+}
+
+async function scrollElement(
+  doc: Document,
+  el: Element,
+  params: Record<string, unknown>,
+): Promise<ScrollResult> {
+  const target = el as HTMLElement;
+  const before = { x: target.scrollLeft, y: target.scrollTop };
+  const metricsBefore = elementMetrics(target);
+  let delta = 0;
+  if (params.to === 'top') delta = -before.y;
+  else if (params.to === 'bottom') {
+    delta = metricsBefore.scrollHeight - metricsBefore.clientHeight - before.y;
+  } else {
+    delta = Number(params.by ?? 0);
+  }
+  if (params.to === 'bottom' && delta < 0) delta = 0;
+
+  target.scrollBy({
+    top: delta,
+    left: 0,
+    behavior: params.smooth === true ? 'smooth' : 'auto',
+  });
+  const settled =
+    params.settle === false ? false : await settleScroll(() => target.scrollTop, 1000);
+  const after = { x: target.scrollLeft, y: target.scrollTop };
+  const metrics = elementMetrics(target);
+  const result: ScrollResult = {
+    target: { selector: String(params.selector) },
+    before,
+    after,
+    delta: { x: after.x - before.x, y: after.y - before.y },
+    atTop: after.y <= 0,
+    atBottom: after.y + metrics.clientHeight >= metrics.scrollHeight - 1,
+    settled,
+    visibilityState: visibilityOf(doc),
+    viewport: getViewport(),
+    metrics,
+  };
+  const warning = backgroundWarning(doc);
+  if (warning !== undefined) result.warning = warning;
+  return assertEffect(result, params.allowNoop === true);
+}
+
+async function scrollToElement(
+  doc: Document,
+  params: Record<string, unknown>,
+): Promise<ScrollToResult> {
+  const located = findByCss(doc, String(params.selector));
+  const before = { x: window.scrollX, y: window.scrollY };
+  (located.element as HTMLElement).scrollIntoView({
+    behavior: params.smooth === true ? 'smooth' : 'auto',
+    block: 'center',
+  });
+  const settled = params.settle === false ? false : await settleScroll(() => window.scrollY, 1000);
+  const after = { x: window.scrollX, y: window.scrollY };
+  const metrics = pageMetrics(doc);
+  const result: ScrollToResult = {
+    element: located.info,
+    target: 'page',
+    before,
+    after,
+    delta: { x: after.x - before.x, y: after.y - before.y },
+    atTop: after.y <= 0,
+    atBottom: after.y + window.innerHeight >= metrics.scrollHeight - 1,
+    settled,
+    visibilityState: visibilityOf(doc),
+    viewport: getViewport(),
+  };
+  const warning = backgroundWarning(doc);
+  if (warning !== undefined) result.warning = warning;
+  return result;
 }
 
 /** dom-query：按 CSS 或可见文本返回匹配元素概要（探索用，不含子树）。 */
@@ -515,32 +696,12 @@ export async function executeDomAction(
       if (params.selector !== undefined) {
         // 滚动元素**自身**的 overflow 内容（可反复触发懒加载）；不改变页面滚动
         const el = findByCss(doc, String(params.selector)).element;
-        scrollElementWithin(el, params);
-      } else if (params.direction !== undefined) {
-        const dir = String(params.direction);
-        const amount =
-          params.amount !== undefined
-            ? Number(params.amount)
-            : Math.round(window.innerHeight * 0.8);
-        const delta =
-          dir === 'up'
-            ? -amount
-            : dir === 'top'
-              ? -window.scrollY
-              : dir === 'bottom'
-                ? document.body.scrollHeight
-                : amount;
-        window.scrollBy({ top: delta, behavior: 'smooth' });
-      } else if (params.amount !== undefined) {
-        window.scrollBy({ top: Number(params.amount), behavior: 'smooth' });
+        return scrollElement(doc, el, params);
       }
-      return { viewport: getViewport() };
+      return scrollPage(doc, params);
     }
     case 'scroll-to': {
-      // 滚动页面使目标元素进入视口（保留旧 scroll --selector 的能力）
-      const l = findByCss(doc, String(params.selector));
-      (l.element as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
-      return { element: l.info };
+      return scrollToElement(doc, params);
     }
     case 'screenshot':
       // 由 background 处理（chrome.tabs.captureVisibleTab）
@@ -552,23 +713,47 @@ export async function executeDomAction(
       return extractPage(doc, params as ExtractOptions, tabId, navId);
     }
     case 'get-page-info': {
-      return {
+      const metrics = pageMetrics(doc);
+      const active = doc.activeElement;
+      const result: Record<string, unknown> = {
         url: doc.location.href,
         title: doc.title,
         viewport: getViewport(),
         scrollY: getScrollY(),
+        readyState: doc.readyState,
+        visibilityState: visibilityOf(doc),
+        selection: doc.getSelection()?.toString() ?? '',
+        scroll: {
+          x: window.scrollX,
+          y: window.scrollY,
+          scrollWidth: metrics.scrollWidth,
+          scrollHeight: metrics.scrollHeight,
+          clientWidth: metrics.clientWidth,
+          clientHeight: metrics.clientHeight,
+        },
       };
+      if (active !== null) {
+        const tag = active.tagName.toLowerCase();
+        result.activeElement = {
+          tag,
+          ...(active.id !== '' ? { id: active.id } : {}),
+          ...(roleOf(active) !== undefined ? { role: roleOf(active) } : {}),
+        };
+      }
+      if (params.selector !== undefined) {
+        const matches = Array.from(doc.querySelectorAll(String(params.selector)));
+        result.selector = {
+          count: matches.length,
+          ...(matches[0] !== undefined && toElementInfo(matches[0]).box !== undefined
+            ? { box: toElementInfo(matches[0]).box }
+            : {}),
+        };
+      }
+      return result;
     }
 
     case 'dom-query': {
       return domQuery(doc, params);
-    }
-
-    case 'links': {
-      return collectLinks(doc, params);
-    }
-    case 'forms': {
-      return collectForms(doc, params);
     }
 
     case 'fetch': {
@@ -581,8 +766,7 @@ export async function executeDomAction(
       });
 
     case 'wait': {
-      await waitFor(params, doc);
-      return {};
+      return waitFor(params, doc);
     }
 
     case 'selection': {
@@ -629,29 +813,77 @@ async function pageFetch(params: Record<string, unknown>): Promise<{
   return { status: res.status, statusText: res.statusText, headers: headerEntries, body };
 }
 
-/** 等待：ms / 元素可见（轮询）/ 网络空闲近似（load）。 */
-async function waitFor(params: Record<string, unknown>, doc: Document): Promise<void> {
+/** 等待：ms / 元素数量稳定 / SPA 内容稳定 / load。 */
+async function waitFor(
+  params: Record<string, unknown>,
+  doc: Document,
+): Promise<{ matched?: number; waitedMs: number; stable: boolean }> {
+  const started = Date.now();
   if (params.ms !== undefined) {
     await sleep(Number(params.ms));
-    return;
+    return { waitedMs: Date.now() - started, stable: true };
   }
   if (params.selector !== undefined) {
+    const selector = String(params.selector);
+    const count = params.count !== undefined ? Math.max(1, Number(params.count)) : 1;
+    const stableMs =
+      params.stableMs !== undefined ? Math.max(0, Number(params.stableMs)) : undefined;
     const deadline = Date.now() + 10_000;
+    let lastCount = -1;
+    let stableSince = 0;
     while (Date.now() < deadline) {
-      const el = doc.querySelector(String(params.selector));
-      if (el !== null && el.getBoundingClientRect().width > 0) return;
+      const matches = Array.from(doc.querySelectorAll(selector));
+      const enough = matches.length >= count;
+      const visibleEnough = count > 1 || matches.some((el) => el.getBoundingClientRect().width > 0);
+      if (enough && visibleEnough) {
+        if (stableMs === undefined) {
+          return { matched: matches.length, waitedMs: Date.now() - started, stable: true };
+        }
+        if (matches.length !== lastCount) {
+          lastCount = matches.length;
+          stableSince = Date.now();
+        } else if (Date.now() - stableSince >= stableMs) {
+          return { matched: matches.length, waitedMs: Date.now() - started, stable: true };
+        }
+      } else {
+        lastCount = -1;
+        stableSince = 0;
+      }
       await sleep(100);
     }
-    throw Object.assign(new Error(`element '${params.selector}' did not appear within 10s`), {
-      code: 'TARGET_NOT_FOUND',
+    throw Object.assign(
+      new Error(`element '${selector}' did not reach count=${count} within 10s`),
+      { code: 'TIMEOUT' },
+    );
+  }
+  if (params.condition === 'content') {
+    const stableMs = params.stableMs !== undefined ? Math.max(0, Number(params.stableMs)) : 500;
+    const deadline = Date.now() + 10_000;
+    let last = '';
+    let stableSince = 0;
+    while (Date.now() < deadline) {
+      const text = (doc.body?.innerText ?? '').replace(/\s+/g, ' ').slice(0, 20_000);
+      const signature = `${doc.location.href}\n${text}`;
+      if (signature !== last) {
+        last = signature;
+        stableSince = Date.now();
+      } else if (Date.now() - stableSince >= stableMs) {
+        return { waitedMs: Date.now() - started, stable: true };
+      }
+      await sleep(100);
+    }
+    throw Object.assign(new Error('page content did not stabilize within 10s'), {
+      code: 'TIMEOUT',
     });
   }
   if (params.condition === 'load' || params.condition === 'networkidle') {
-    if (doc.readyState === 'complete') return;
+    if (doc.readyState === 'complete') {
+      return { waitedMs: Date.now() - started, stable: true };
+    }
     await new Promise<void>((resolve) => {
       window.addEventListener('load', () => resolve(), { once: true });
     });
-    return;
+    return { waitedMs: Date.now() - started, stable: true };
   }
   throw Object.assign(new Error('wait requires ms / selector / condition'), {
     code: 'INVALID_PARAMS',
