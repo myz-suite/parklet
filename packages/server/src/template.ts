@@ -1,5 +1,6 @@
 /** `plt run` 的变量替换：`${name}` / `${as.path}`；`$${name}` 输出字面量。 */
 
+/** Resolve a dotted variable path (`as.data.field`) from the run variable map. */
 export function lookupVar(vars: Record<string, unknown>, path: string): unknown {
   let current: unknown = vars;
   for (const part of path.split('.')) {
@@ -9,7 +10,7 @@ export function lookupVar(vars: Record<string, unknown>, path: string): unknown 
   return current;
 }
 
-/** 递归替换 `${name}` / `${as.path}`；整串只含一个变量时保留原类型。 */
+/** Recursively replace `${name}` / `${as.path}`; `$${name}` stays literal. */
 export function interpolateValue(value: unknown, vars: Record<string, unknown>): unknown {
   if (typeof value === 'string') {
     const exact = /^\$\{([^}]+)\}$/.exec(value);

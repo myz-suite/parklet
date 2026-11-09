@@ -154,7 +154,8 @@ export function findByText(doc: Document, text: string, options: FindByTextOptio
   const needle = text.trim().toLowerCase();
   let candidates = candidatesIn(doc, options.within).filter((el) => {
     const value = visibleTextOf(el).toLowerCase();
-    return options.exact === true ? value === needle : value.includes(needle);
+    if (options.exact !== true) return value.includes(needle);
+    return value.replace(/\s+/g, ' ').trim() === needle.replace(/\s+/g, ' ');
   });
 
   if (options.role !== undefined) {

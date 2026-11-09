@@ -10,7 +10,8 @@ function splitUnescaped(value: string, separator: string): string[] {
   let escaped = false;
   for (const ch of value) {
     if (escaped) {
-      current += ch;
+      // Unescape only this pass's separator; keep other escapes (`\|`, CSS `\:`) for later.
+      current += ch === separator ? ch : `\\${ch}`;
       escaped = false;
     } else if (ch === '\\') {
       escaped = true;
@@ -26,7 +27,7 @@ function splitUnescaped(value: string, separator: string): string[] {
   return out;
 }
 
-/** 解析 `name=selector[@attr][|fallback...],...`。 */
+/** Parse `name=selector[@attr][|fallback...],...` into wire FieldSpec entries. */
 export function parseFieldsSpec(raw: string): FieldSpec[] {
   const parts = splitUnescaped(raw, ',');
   return parts.map((part, index) => {
@@ -63,7 +64,7 @@ export function parseFieldsSpec(raw: string): FieldSpec[] {
   });
 }
 
-/** 读取 JSON 文件形式的字段定义（复杂选择器/含逗号选择器用）。 */
+/** Read a JSON array of FieldSpec entries from a file (for complex selectors). */
 export function readFieldsFile(path: string): FieldSpec[] {
   const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
   if (!Array.isArray(parsed)) throw new Error(`fields file '${path}' must contain a JSON array`);
@@ -88,7 +89,7 @@ export function readFieldsFile(path: string): FieldSpec[] {
   });
 }
 
-/** 从 commander 的 opts 里解析 fields / fieldsFile（二选一）。 */
+/** Resolve `--fields` / `--fields-file` from commander options (mutually exclusive). */
 export function fieldsFromOpts(opts: Record<string, unknown>): FieldSpec[] | undefined {
   if (opts.fields !== undefined && opts.fieldsFile !== undefined) {
     throw new Error('use only one of --fields and --fields-file');

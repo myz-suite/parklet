@@ -112,6 +112,39 @@ describe('Router — targeting', () => {
     expect(ctx.target.get()).toBe(42);
   });
 
+  it('list-tabs preserves an existing target but seeds a missing one', async () => {
+    ctx.hub.responder = (req) => ({
+      id: req.id,
+      result: {
+        tabId: 7,
+        context: { url: 'https://example.com', title: 'Example', navId: 1, tabId: 7 },
+        data: {
+          tabs: [
+            { id: 7, title: 'Active', url: 'https://a.example', active: true },
+            { id: 42, title: 'Current', url: 'https://b.example', active: false },
+          ],
+        },
+      },
+    });
+    ctx.target.set(42);
+    const res = await ctx.router.handle({ id: '1', method: 'list-tabs' });
+    expect(ctx.target.get()).toBe(42);
+    if ('result' in res) {
+      expect(res.result.tabId).toBe(42);
+      const data = res.result.data as { tabs: Array<{ id: number; current?: boolean }> };
+      expect(data.tabs.find((t) => t.id === 42)?.current).toBe(true);
+      expect(data.tabs.find((t) => t.id === 7)?.current).toBe(false);
+    }
+
+    ctx.target.set(undefined);
+    await ctx.router.handle({ id: '2', method: 'list-tabs' });
+    expect(ctx.target.get()).toBe(7);
+
+    ctx.target.set(99);
+    await ctx.router.handle({ id: '3', method: 'list-tabs' });
+    expect(ctx.target.get()).toBe(7);
+  });
+
   it('close-tab honors params.tabId when no current/latest target exists', async () => {
     ctx.hub.latestTabId = undefined;
     const res = await ctx.router.handle({

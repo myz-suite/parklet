@@ -60,14 +60,17 @@ interface PageInfoData {
   viewport?: { width: number; height: number };
 }
 
+/** Create an Error carrying a protocol-style code. */
 function commandError(code: string, message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code });
 }
 
+/** Extract declared field names in order. */
 function fieldNames(fields: FieldSpec[]): string[] {
   return fields.map((f) => f.name);
 }
 
+/** Pick a deterministic default dedupe key from declared fields. */
 function inferDedupeKey(fields: FieldSpec[]): string[] {
   const names = fieldNames(fields);
   if (names.includes('id')) return ['id'];
@@ -75,6 +78,7 @@ function inferDedupeKey(fields: FieldSpec[]): string[] {
   return names;
 }
 
+/** Normalize one key value; ids are never truncated by --dedupe-prefix. */
 function normalizeValue(value: string | null, prefix: number, key: string): string {
   const raw = value ?? '';
   // ids are identifiers, not text: never truncate them into a different id.
@@ -82,6 +86,7 @@ function normalizeValue(value: string | null, prefix: number, key: string): stri
   return raw.slice(0, prefix);
 }
 
+/** Build a stable dedupe key, or undefined when a key value is missing. */
 function dedupeKeyOf(row: CollectRow, keys: string[], prefix: number): string | undefined {
   const values = keys.map((key) => row[key] ?? null);
   // A missing key is not an empty string: keep the row instead of merging it.
@@ -89,6 +94,7 @@ function dedupeKeyOf(row: CollectRow, keys: string[], prefix: number): string | 
   return JSON.stringify(values.map((value, index) => normalizeValue(value, prefix, keys[index]!)));
 }
 
+/** Compute the informational observed datetime range (never a coverage claim). */
 function pickObserved(items: CollectRow[]): { newest?: string; oldest?: string } | undefined {
   let newest: number | undefined;
   let oldest: number | undefined;
@@ -115,6 +121,7 @@ function pickObserved(items: CollectRow[]): { newest?: string; oldest?: string }
   };
 }
 
+/** Resolve and optionally activate the target tab before collecting. */
 async function resolveTabId(
   send: CollectSend,
   explicit: number | undefined,
@@ -131,6 +138,10 @@ async function resolveTabId(
   return tabId;
 }
 
+/**
+ * Run a fixed number of extract+scroll rounds, de-duplicating rows and returning
+ * the collected items plus a reproducible step/stop report.
+ */
 export async function runCollect(
   send: CollectSend,
   options: CollectOptions,
@@ -146,6 +157,29 @@ export async function runCollect(
   }
   if (!Number.isInteger(options.dedupePrefix) || options.dedupePrefix < 0) {
     throw commandError('INVALID_PARAMS', 'collect --dedupe-prefix must be an integer >= 0');
+  }
+
+  const keys = options.dedupe
+    ? options.dedupeKey !== undefined
+      ? options.dedupeKey
+          .split(',')
+          .map((k) => k.trim())
+          .filter((k) => k.length > 0)
+      : inferDedupeKey(options.fields)
+    : [];
+
+  if (options.dedupe) {
+    if (options.dedupeKey !== undefined && keys.length === 0) {
+      throw commandError('INVALID_PARAMS', 'dedupe-key must include at least one field');
+    }
+    const names = new Set(fieldNames(options.fields));
+    const unknown = keys.filter((key) => !names.has(key));
+    if (unknown.length > 0) {
+      throw commandError(
+        'INVALID_PARAMS',
+        `unknown dedupe key(s): ${unknown.join(', ')}; known fields: ${[...names].join(', ')}`,
+      );
+    }
   }
 
   const tabId = await resolveTabId(send, options.tabId, options.focus);
@@ -168,25 +202,6 @@ export async function runCollect(
   const items: CollectRow[] = [];
   const seen = new Set<string>();
   let duplicates = 0;
-  const keys = options.dedupe
-    ? options.dedupeKey !== undefined
-      ? options.dedupeKey
-          .split(',')
-          .map((k) => k.trim())
-          .filter((k) => k.length > 0)
-      : inferDedupeKey(options.fields)
-    : [];
-
-  if (options.dedupe) {
-    const names = new Set(fieldNames(options.fields));
-    const unknown = keys.filter((key) => !names.has(key));
-    if (unknown.length > 0) {
-      throw commandError(
-        'INVALID_PARAMS',
-        `unknown dedupe key(s): ${unknown.join(', ')}; known fields: ${[...names].join(', ')}`,
-      );
-    }
-  }
 
   const addRows = (rows: CollectRow[]): number => {
     let added = 0;

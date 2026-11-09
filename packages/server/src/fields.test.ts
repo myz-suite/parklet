@@ -22,6 +22,11 @@ describe('parseFieldsSpec', () => {
     expect(parseFieldsSpec('x=a\\,b')).toEqual([{ name: 'x', selector: 'a,b' }]);
   });
 
+  it('unescapes only the active separator and preserves CSS escapes', () => {
+    expect(parseFieldsSpec('x=a\\|b')).toEqual([{ name: 'x', selector: 'a|b' }]);
+    expect(parseFieldsSpec('x=.md\\:flex')).toEqual([{ name: 'x', selector: '.md\\:flex' }]);
+  });
+
   it('treats @text as text', () => {
     expect(parseFieldsSpec('text=span@text')).toEqual([{ name: 'text', selector: 'span' }]);
   });

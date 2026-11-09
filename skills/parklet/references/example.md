@@ -250,7 +250,8 @@ plt run flow.jsonl --json       # one JSON result per line
 plt run flow.jsonl --fail-fast  # stop at the first error
 ```
 
-The `vars` prelude applies to every invocation; alternatively pass `--var base=...`. An escaped
+The `vars` prelude applies to every invocation and overwrites `--var` values. To override `base`
+from the command line, remove `base` from the prelude and pass `--var base=...`. An escaped
 `$${name}` is emitted literally.
 
 Per-line `tabId` overrides the global `--tab`. `${name}` is replaced in params; an `as` captures

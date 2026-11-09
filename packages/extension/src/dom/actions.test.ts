@@ -213,10 +213,25 @@ describe('interaction actions', () => {
     expect(res.delta.y).toBe(300);
   });
 
-  it('scroll-to brings the element into view and returns it', async () => {
+  it('scroll-to brings the element into view and reports post-scroll box', async () => {
     document.body.innerHTML = '<div id="target">T</div>';
     const el = document.getElementById('target')!;
-    const spy = vi.fn();
+    let top = 0;
+    el.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: top,
+        width: 100,
+        height: 20,
+        top,
+        left: 0,
+        right: 100,
+        bottom: top + 20,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const spy = vi.fn(() => {
+      top = 100;
+    });
     (el as unknown as { scrollIntoView: () => void }).scrollIntoView = spy;
     const res = (await executeDomAction(
       'scroll-to',
@@ -225,10 +240,11 @@ describe('interaction actions', () => {
       1,
       0,
     )) as {
-      element?: { tag?: string };
+      element?: { tag?: string; box?: { y: number } };
     };
     expect(spy).toHaveBeenCalledTimes(1);
     expect(res.element?.tag).toBe('div');
+    expect(res.element?.box?.y).toBe(100);
   });
 
   it('dom-query returns matches with tag/class/text and total', async () => {

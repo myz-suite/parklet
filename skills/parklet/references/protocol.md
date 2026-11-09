@@ -54,9 +54,9 @@ The common `result` fields carry addressing and continuity information; `data` h
 
 ## Addressing & Continuity (tab / navId)
 
-Optional addressing fields in command `params`, in priority order:
+Optional addressing field on the request envelope (`tabId`, not `params.tabId`), in priority order:
 
-1. `params.tabId` — explicit physical tab (temporary; not remembered)
+1. envelope `tabId` — explicit physical tab for this command; on success it is written back as current. Exceptions: `list-tabs` only seeds a missing target and never resets an existing one; `close-tab` clears the target only when it matches the closed tab, otherwise preserves it
 2. the server's **current tab** (set by the last successful command)
 3. Fallback: the most recently active tab; `EXTENSION_NO_TAB` when none is available
 
@@ -71,7 +71,8 @@ CLI-side mental model:
 ```
 plt goto <url>          # sets the current tab; response carries tabId/context
 plt click "Submit"      # acts on the current tab by default
-plt <cmd> --tab 123     # explicitly target another tab for this command
+plt <cmd> --tab 123     # target another tab; success writes 123 back as current
+plt tab-close 123      # clears current only if 123 was current; otherwise preserves it
 ```
 
 ## Command Set
@@ -128,7 +129,7 @@ Write-access markers are advisory (audit/logging): `always` = write operation; `
 
 `extract --mode forms` enumerates visible `input`/`select`/`textarea`/`button` controls and **groups them by form `action`/`method`/`target`** (controls not owned by a `<form>` form an `action`-less group). Fields include `tag`/`type`/`name`/`value`/`labels` (`label[for]` > wrapping label > `aria-label` > `placeholder`), plus `checked`/`selected`/`disabled`/`required`/`id`. `input[type=password]` values are masked as `********`. Pagination slices the **fields** (flat across groups); `total` is the number of fields, and each group carries only the fields falling inside `[offset, offset+limit)`. `--selector` scopes the query; `--all` includes invisible fields.
 
-`extract --fields "name=css[@attr][|fallback],..."` returns `{ mode:'fields', items, total }`; each row is a record with `null` for missing fields. `@href`/`@src` resolve to absolute URLs. Use `--fields-file <json>` for complex selectors. `fields` is mutually exclusive with `mode`/`article` and **requires `selector`** (the row selector); omitting it returns `INVALID_PARAMS`.
+`extract --fields "name=css[@attr][|fallback],..."` returns `{ mode:'fields', items, total }`; each row is a record with `null` for missing fields. `@href`/`@src` resolve to absolute URLs. Use `--fields-file <path>` (a JSON array file) for complex selectors. `fields` is mutually exclusive with `mode`/`article` and **requires `selector`** (the row selector); omitting it returns `INVALID_PARAMS`. Only the active separator is unescaped, so write CSS escapes with a single backslash (e.g. `.md\:flex`). A single backslash does **not** preserve `,` or `|` in a selector; use `--fields-file` for selectors that need those escaped separators.
 
 Both default to `visibleOnly: true` (pass `false` to include invisible items) and share a collection cap (`truncated: true` when hit) applied **before** paging.
 
@@ -296,6 +297,7 @@ interface TabInfo {
   title: string;
   url: string;
   active: boolean;
+  current?: boolean; // server current target (may differ from browser-active)
 }
 interface Viewport {
   width: number;

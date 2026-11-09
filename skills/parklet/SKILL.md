@@ -26,7 +26,7 @@ The extension's toolbar icon shows a status badge — **green** = connected, **r
 Navigation/state: `plt status`, `plt ping`, `plt goto <url>`, `plt back`, `plt forward`, `plt reload`
 Interact: `plt click <css>`, `plt click-text <text> [--within <css>] [--role <role>] [--exact] [--nth <n>]` (only actionable elements), `plt fill <css> <value>`, `plt type <css> <text>`, `plt press <key|combo>` (e.g. `Control+c`), `plt hover <css>`, `plt select <css> --value <v>`, `plt selection [--selector <css> | --text <text>]` (select text, returns the selected string)
 View: `plt scroll --by <px>` / `plt scroll --to top|bottom` (instant + settle by default), `plt scroll --selector <css> --by <px>` (scroll inside an element), `plt scroll-to <css>` (bring element into view), `plt screenshot [--path out.png] [--selector <css>] [--format png|jpeg]`
-Extract: `plt extract [--selector <css>] [--mode text|structured|html|links|forms] [--fields "<spec>"] [--fields-file <json>] [--article] [--depth N] [--offset N] [--limit N] [--max-chars N] [--exclude <css>] [--visible-only|--all]`, `plt page-info [--selector <css>]`, `plt dom-query [<css> | --text <s>] [--limit N]` (list matching elements), `plt tabs`, `plt tab <id>` (activate + make current), `plt tab-new <url>`, `plt tab-close [id]`
+Extract: `plt extract [--selector <css>] [--mode text|structured|html|links|forms] [--fields "<spec>"] [--fields-file <path>] [--article] [--depth N] [--offset N] [--limit N] [--max-chars N] [--exclude <css>] [--visible-only|--all]`, `plt page-info [--selector <css>]`, `plt dom-query [<css> | --text <s>] [--limit N]` (list matching elements), `plt tabs`, `plt tab <id>` (activate + make current), `plt tab-new <url>`, `plt tab-close [id]`
 Advanced: `plt eval "<script>" | --file <path> | --stdin` (runs a script in the page; must contain `return`; server must set `PARKLET_ENABLE_EVAL=1`)
 Network in page: `plt fetch <url> [--method POST] [--header "k: v"] [--body ...]`, `plt search <query> [--engine google|duckduckgo] [--page N]` (default engine google; paging via --page)
 Wait: `plt wait [--ms N | --selector <css> [--count N] [--stable <ms>] | --condition load|networkidle|content]`
@@ -47,8 +47,9 @@ Notes:
 
 ## 3. Continuity model (IMPORTANT)
 
-- **Current tab** = the server's default target. The first `plt goto` sets it; later commands reuse it. Override per command with `--tab <id>`.
+- **Current tab** = the server's default target. The first `plt goto` sets it; later commands reuse it. Override per command with `--tab <id>`; a successful targeted command writes that tab back as current. `plt tabs` seeds the target from the browser-active tab only when none exists; later manual tab activation changes only the fallback and does not replace the selected current target.
 - **tabId** = physical tab. **navId** increments on every navigation. If the current tab is closed, the server clears it and the next command falls back to the most recently active tab.
+- `plt tabs` prints `*` for the browser-active tab in each Chrome window (multiple windows can each show `*`; it does not mean that window is focused) and `>` for the server current target; they can differ after `--tab`.
 - Every response carries a `context` snapshot `{url, title, navId, tabId}`. **If `context.url` or `context.navId` changed between commands, the page changed** — re-check before acting on stale content.
 
 ## 4. Standard workflows
