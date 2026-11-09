@@ -906,6 +906,37 @@ test('extract --mode links：分组、分页与作用域', async ({ session }) =
     expect(cli.code, cli.stderr).toBe(0);
     const parsed = JSON.parse(cli.stdout.trim()) as { data?: { links?: unknown[] } };
     expect(parsed.data?.links).toHaveLength(1);
+
+    const conflict = await runCli(session.serverUrl, [
+      '--tab',
+      String(session.tabId),
+      'extract',
+      '--mode',
+      'links',
+      '--selector',
+      "div[role='tablist']",
+      '--within',
+      '#scope',
+    ]);
+    expect(conflict.code).toBe(2);
+    expect(conflict.stderr).toMatch(/not both/);
+
+    const conflictJson = await runCli(session.serverUrl, [
+      '--tab',
+      String(session.tabId),
+      '--json',
+      'extract',
+      '--selector',
+      'body',
+      '--within',
+      'body',
+    ]);
+    expect(conflictJson.code).toBe(2);
+    const error = JSON.parse(conflictJson.stdout.trim()) as {
+      error?: { code?: string; message?: string };
+    };
+    expect(error.error?.code).toBe('INVALID_PARAMS');
+    expect(error.error?.message).toMatch(/not both/);
   } finally {
     web.stop();
   }

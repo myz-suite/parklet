@@ -115,6 +115,15 @@ describe('findByText', () => {
     expect(element.id).toBe('only');
   });
 
+  it('normalizes whitespace for exact matching', () => {
+    setup('<button id="only"><div>Save</div><div>draft</div></button>');
+    const { element } = findByText(document, 'Save draft', {
+      actionableOnly: true,
+      exact: true,
+    });
+    expect(element.id).toBe('only');
+  });
+
   it('supports within, exact, role and nth', () => {
     setup(
       '<div id="scope"><button id="a">Open</button><button id="b">Open file</button></div>' +

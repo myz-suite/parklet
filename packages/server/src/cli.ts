@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { Command } from 'commander';
 import {
   PROTOCOL_VERSION,
+  isErrorCode,
   type ErrorCode,
   type Method,
   type ProtocolError,
@@ -308,7 +309,7 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
         console.log(d.content ?? '(no content)');
       } else if (d.mode === 'fields' && Array.isArray(d.items)) {
         for (const item of d.items) console.log(JSON.stringify(item));
-        if (range) console.log(range);
+        if (range && opts.quiet !== true) console.error(range);
       } else if (d.mode === 'links') {
         printLinks(d as Parameters<typeof printLinks>[0]);
       } else if (d.mode === 'forms') {
@@ -465,10 +466,17 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
     }
     case 'list-tabs': {
       const d = data as {
-        tabs?: Array<{ id: number; title: string; url: string; active: boolean }>;
+        tabs?: Array<{
+          id: number;
+          title: string;
+          url: string;
+          active: boolean;
+          current?: boolean;
+        }>;
       };
       for (const t of d.tabs ?? []) {
-        console.log(`${t.id}${t.active ? '*' : ' '}  ${t.title}  ${t.url}`);
+        const marks = `${t.active ? '*' : ' '}${t.current ? '>' : ' '}`;
+        console.log(`${t.id}${marks}  ${t.title}  ${t.url}`);
       }
       break;
     }
@@ -520,6 +528,22 @@ function printError(error: ProtocolError['error'], opts: GlobalOpts): void {
   else console.error(msg);
 }
 
+function reportLocalError(
+  err: unknown,
+  opts: Record<string, unknown>,
+  fallback: ErrorCode,
+  exitCode: number,
+): void {
+  const e = err as Error & { code?: string };
+  const code: ErrorCode = e.code !== undefined && isErrorCode(e.code) ? e.code : fallback;
+  if (opts.json === true) {
+    console.log(JSON.stringify({ error: { code, message: e.message } }));
+  } else {
+    console.error(`✖ [${code}] ${e.message}`);
+  }
+  process.exitCode = exitCode;
+}
+
 // ---------------------------------------------------------------------------
 // commander 注册
 // ---------------------------------------------------------------------------
@@ -535,17 +559,16 @@ function register(
   const c = program.command(name).description(description);
   options?.(c);
   c.action((...rawArgs: unknown[]) => {
+    let opts: Record<string, unknown> = {};
     try {
       const commandObj = rawArgs.pop() as Command;
-      const opts = commandObj.optsWithGlobals() as Record<string, unknown>;
+      opts = commandObj.optsWithGlobals() as Record<string, unknown>;
       const args = rawArgs as string[];
       void run(method, buildParams(opts, args), opts).catch((err: unknown) => {
-        console.error(`✖ ${(err as Error).message ?? String(err)}`);
-        process.exitCode = 1;
+        reportLocalError(err, opts, 'INTERNAL', 1);
       });
     } catch (err) {
-      console.error(`✖ ${(err as Error).message ?? String(err)}`);
-      process.exitCode = 2;
+      reportLocalError(err, opts, 'INVALID_PARAMS', 2);
     }
   });
 }
@@ -788,24 +811,29 @@ Run \`plt <command> --help\` for command-specific options.`,
     'extract',
     'extract',
     'extract text / DOM / article / fields / links / forms',
-    (opts) => ({
-      mode: opts.mode,
-      fields: fieldsFromOpts(opts),
-      article: opts.article,
-      selector: opts.selector ?? opts.within,
-      offset: opts.offset !== undefined ? Number(opts.offset) : undefined,
-      limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
-      depth: opts.depth !== undefined ? Number(opts.depth) : undefined,
-      visibleOnly: opts.all === true ? false : opts.visibleOnly,
-      maxChars: opts.maxChars !== undefined ? Number(opts.maxChars) : undefined,
-      exclude: opts.exclude,
-    }),
+    (opts) => {
+      if (opts.selector !== undefined && opts.within !== undefined) {
+        throw new Error('extract: use either --selector or --within, not both');
+      }
+      return {
+        mode: opts.mode,
+        fields: fieldsFromOpts(opts),
+        article: opts.article,
+        selector: opts.selector ?? opts.within,
+        offset: opts.offset !== undefined ? Number(opts.offset) : undefined,
+        limit: opts.limit !== undefined ? Number(opts.limit) : undefined,
+        depth: opts.depth !== undefined ? Number(opts.depth) : undefined,
+        visibleOnly: opts.all === true ? false : opts.visibleOnly,
+        maxChars: opts.maxChars !== undefined ? Number(opts.maxChars) : undefined,
+        exclude: opts.exclude,
+      };
+    },
     (c) =>
       c
         .option('--mode <m>', 'text|structured|html|links|forms (default: text)')
         .option('--all', 'include invisible elements (links/forms)')
         .option('--fields <spec>', 'structured fields: name=selector[@attr][|fallback],...')
-        .option('--fields-file <json>', 'JSON array of {name,selector,attr?,alternatives?}')
+        .option('--fields-file <path>', 'JSON file: [{name,selector,attr?,alternatives?}]')
         .option('--article', 'extract article body (defuddle)')
         .option('--selector <css>', 'CSS selector (first-level list / row selector)')
         .option('--within <css>', 'alias for --selector')
@@ -958,7 +986,7 @@ Run \`plt <command> --help\` for command-specific options.`,
     .description('collect rows while scrolling a fixed number of times (fields + repeat)')
     .argument('<selector>', 'row selector (e.g. article[data-testid="tweet"])')
     .option('--fields <spec>', 'name=selector[@attr][|fallback],...')
-    .option('--fields-file <json>', 'JSON array of {name,selector,attr?,alternatives?}')
+    .option('--fields-file <path>', 'JSON file: [{name,selector,attr?,alternatives?}]')
     .option('--repeat <n>', 'number of scroll rounds (required, >= 1)')
     .option('--scroll-by <px>', 'pixels per scroll (default: 0.8 viewport, capped at viewport)')
     .option('--max-items <n>', 'stop after N items', '10000')

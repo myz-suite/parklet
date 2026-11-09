@@ -100,6 +100,8 @@ export interface TabInfo {
   title: string;
   url: string;
   active: boolean;
+  /** server current target (may differ from the browser-active tab) */
+  current?: boolean;
 }
 
 export interface SearchResult {

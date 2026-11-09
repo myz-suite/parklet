@@ -223,6 +223,22 @@ describe('runCollect', () => {
     expect(report.duplicates).toBe(0);
   });
 
+  it('rejects an explicitly empty dedupe key list', async () => {
+    const feed = makeFeed();
+    await expect(
+      runCollect(feed.send, {
+        selector: 'article',
+        fields,
+        repeat: 1,
+        maxItems: 100,
+        dedupe: true,
+        dedupeKey: '',
+        dedupePrefix: 0,
+        focus: false,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+  });
+
   it('rejects unknown dedupe keys instead of merging rows', async () => {
     const feed = makeFeed();
     await expect(

@@ -219,12 +219,39 @@ export class Router {
       const closedId = (params as { tabId?: number }).tabId ?? wireReq.tabId;
       if (closedId !== undefined) this.deps.target.clearIf(closedId);
     } else if (resTabId !== undefined) {
-      this.deps.target.set(resTabId);
+      if (req.method !== 'list-tabs') {
+        this.deps.target.set(resTabId);
+      } else if (this.deps.target.get() === undefined) {
+        // list-tabs is read-only for an existing target, but it seeds the active-tab
+        // fallback after a restart when no current target exists yet.
+        this.deps.target.set(resTabId);
+      }
+    }
+
+    let finalTabId = resTabId;
+    if (req.method === 'list-tabs') {
+      const data = res.result.data as {
+        tabs?: Array<{ id: number; active?: boolean; current?: boolean }>;
+      };
+      const tabs = Array.isArray(data.tabs) ? data.tabs : [];
+      let current = this.deps.target.get();
+      if (current !== undefined && !tabs.some((tab) => tab.id === current)) {
+        current = undefined;
+      }
+      if (current === undefined) {
+        current =
+          tabs.find((tab) => tab.id === resTabId)?.id ??
+          tabs.find((tab) => tab.active === true)?.id ??
+          tabs[0]?.id;
+        this.deps.target.set(current);
+      }
+      for (const tab of tabs) tab.current = tab.id === current;
+      if (current !== undefined) finalTabId = current;
     }
 
     const finalRes: Response = {
       id: res.id,
-      result: { tabId: resTabId, context, data: res.result.data },
+      result: { tabId: finalTabId, context, data: res.result.data },
     };
     this.deps.ledger.record({
       ...base,

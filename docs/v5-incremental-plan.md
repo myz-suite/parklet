@@ -56,26 +56,26 @@ X/Twitter 时间线抓取暴露的核心问题是**副作用不可验证**：
 2. **固定轮次、可复现**：`collect` 用 `--repeat N`，而不是依赖时间窗口或页面文案。
 3. **小步、去重、可停止**：虚拟列表每次滚动不超过视口高度；每轮抽取并去重。
 4. **stdout = 数据，stderr = 诊断**：事件、进度、上下文头、警告一律 stderr；`--quiet` 可静默。
-5. **单一 tab 状态**：激活 tab 就等于改变 current tab，不区分 active / current。
+5. **单一 current target**：server 维护一个 current target；`plt tab`/`tab-new` 激活并写回，普通命令的 `--tab` 也写回 current 但不会自动激活浏览器 tab；`plt tabs` 分别标记 `*` active 与 `>` current。
 6. **不依赖 eval**：结构化字段抽取走协议内建能力。
 7. **不制造虚假完整性**：只报告观察到的数据与轮次，不宣称覆盖时间窗口。
 
 ## 3. 优先级总表
 
-| 阶段 | #   | 增量                      | 依赖    | 结果                                                  |
-| ---- | --- | ------------------------- | ------- | ----------------------------------------------------- |
-| P0   | 1   | scroll 契约重做           | —       | 同步、可验证、后台标签页不再静默失败                  |
-| P0   | 2   | `extract --fields`        | —       | 结构化记录数组，支持 `@attr` 与精确时间               |
-| P0   | 3   | `collect --repeat`        | 1, 2    | 固定轮次采集；输出步骤、去重、停止原因、观察范围      |
-| P0   | 4   | stdout/stderr 分离        | —       | 数据纯 stdout；事件/日志 stderr；`--quiet`            |
-| P1   | 5   | tab 语义统一              | —       | 激活即 current；`tab` / `tab-new` / `tab-close`       |
-| P1   | 6   | `click-text` 可点击性判定 | —       | 纯文本不参与歧义；多个可点击才报错                    |
-| P1   | 7   | `wait` 增强               | —       | 数量稳定、计数、SPA 内容就绪                          |
-| P1   | 8   | links/forms 并入 extract  | —       | 删除顶层命令；`extract --mode links\|forms`；修作用域 |
-| P2   | 9   | `page-info` 增强          | —       | activeElement/selection/readyState/scroll 快照        |
-| P2   | 10  | `run` 变量与输出传递      | 4       | 变量替换、`as` 捕获；循环另行评估                     |
-| P2   | 11  | `screenshot` 自动聚焦     | 5       | 元素截图不再要求用户先手动切 tab                      |
-| P2   | 12  | 虚拟列表对抗性 E2E        | 1, 2, 3 | 重复渲染/跳项/空窗/后台 tab 回归                      |
+| 阶段 | #   | 增量                      | 依赖    | 结果                                                                 |
+| ---- | --- | ------------------------- | ------- | -------------------------------------------------------------------- |
+| P0   | 1   | scroll 契约重做           | —       | 同步、可验证、后台标签页不再静默失败                                 |
+| P0   | 2   | `extract --fields`        | —       | 结构化记录数组，支持 `@attr` 与精确时间                              |
+| P0   | 3   | `collect --repeat`        | 1, 2    | 固定轮次采集；输出步骤、去重、停止原因、观察范围                     |
+| P0   | 4   | stdout/stderr 分离        | —       | 数据纯 stdout；事件/日志 stderr；`--quiet`                           |
+| P1   | 5   | tab 语义统一              | —       | current target；`tab` / `tab-new` / `tab-close`；active/current 分列 |
+| P1   | 6   | `click-text` 可点击性判定 | —       | 纯文本不参与歧义；多个可点击才报错                                   |
+| P1   | 7   | `wait` 增强               | —       | 数量稳定、计数、SPA 内容就绪                                         |
+| P1   | 8   | links/forms 并入 extract  | —       | 删除顶层命令；`extract --mode links\|forms`；修作用域                |
+| P2   | 9   | `page-info` 增强          | —       | activeElement/selection/readyState/scroll 快照                       |
+| P2   | 10  | `run` 变量与输出传递      | 4       | 变量替换、`as` 捕获；循环另行评估                                    |
+| P2   | 11  | `screenshot` 自动聚焦     | 5       | 元素截图不再要求用户先手动切 tab                                     |
+| P2   | 12  | 虚拟列表对抗性 E2E        | 1, 2, 3 | 重复渲染/跳项/空窗/后台 tab 回归                                     |
 
 ## 4. P0 增量
 
@@ -100,7 +100,7 @@ X/Twitter 时间线抓取暴露的核心问题是**副作用不可验证**：
 - `--to <top|bottom>`：跳到边界；与 `--by` 互斥。
 - `--selector <css>`：滚动元素内部（保留现有语义）。
 - `--smooth`：平滑滚动（默认 `auto`）；仍等待稳定。
-- `--settle`（默认开启）/ `--no-settle`：滚动位置稳定 2 帧，最多 1s。
+- settle 默认开启；`--no-settle` 关闭（最多等待 1s）。
 - `--focus`：滚动前由 background 激活目标 tab；激活失败则命令报错。`BACKGROUND_TAB` 只在滚动成功但文档仍隐藏时作为警告返回。
 - `--allow-noop`：允许 `delta === 0`；默认报 `NO_EFFECT`。
 
@@ -158,7 +158,7 @@ plt extract --selector "article[data-testid='tweet']" \
 - `name=selector`：取可见文本（`innerText`，空白归一化）。
 - `name=selector@attr`：取属性；`@text` 显式取文本。
 - `name=selector1|selector2`：按顺序取第一个命中。
-- `\,` 转义逗号，`\|` 转义竖线；复杂选择器用 `--fields-file <json>`。
+- `\,` 转义逗号，`\|` 转义竖线；复杂选择器用 `--fields-file <path>`（文件内含 JSON 数组）。
 - `--fields-file`：`[{ "name": "author", "selector": "...", "attr": "datetime" }]`。
 - 缺失字段固定输出 `null`（不提供 `--omit-null`，保持记录形状稳定）。
 - `--visible-only`：按行过滤不可见元素。
@@ -171,6 +171,7 @@ plt extract --selector "article[data-testid='tweet']" \
 interface FieldSpec {
   name: string;
   selector: string;
+  alternatives?: string[]; // selector 未命中时依次尝试
   attr?: string; // 缺省 = text
 }
 
@@ -230,7 +231,7 @@ plt collect "article[data-testid='tweet']" \
 2. 校验 `--repeat` 必须显式提供且 ≥ 1（不允许 0）。
 3. 执行一次初始 `extract --fields`，建立去重集合；若已达 `--max-items` 直接停止。
 4. 重复 `--repeat` 次：
-   - 执行 `scroll --by min(scrollBy, viewportHeight)`（默认 `--settle`）。
+   - 执行 `scroll --by min(scrollBy, viewportHeight)`（默认等待滚动稳定）。
    - `scroll` 返回 `NO_EFFECT` 且 `error.data.atBottom === true` → 停止 `bottom`；否则原样抛错。
    - 否则再次 `extract --fields`，按 `--dedupe-key` 去重，追加新记录。
    - 记录本轮 `{ index, newItems, totalItems, scroll: {before,after,delta}, atBottom }`。
@@ -246,7 +247,7 @@ plt collect "article[data-testid='tweet']" \
 | `--repeat <n>`               | **必填（≥1）**                                  | 滚动轮次；必须显式提供，不允许 0                          |
 | `--scroll-by <px>`           | 视口 × 0.8                                      | 单次滚动上限不超过视口高度；超出则静默 clamp              |
 | `--max-items <n>`            | 10000                                           | 安全上限                                                  |
-| `--dedupe`                   | 开启                                            | 默认去重；`--no-dedupe` 关闭                              |
+| `--no-dedupe`                | 关闭（即默认去重）                              | 关闭去重                                                  |
 | `--dedupe-key <a,b>`         | 按声明字段推断：`id` > `author,text` > 全部字段 | 去重键；未知字段报 `INVALID_PARAMS`；记录缺键则不参与合并 |
 | `--dedupe-prefix <n>`        | 0                                               | 非负整数；仅非 id 字段取前 N 字符参与去重（0 = 全量）     |
 | `--no-focus`                 | 关闭（即默认激活）                              | 采集前不激活目标 tab                                      |
@@ -308,7 +309,7 @@ interface CollectReport {
 - stderr：`📍` 上下文头、`🔔 events`、进度、警告、`run` 的 `#N method`。
 - `--json`：stdout 只输出一个 JSON 对象；错误也输出 `{error}` 到 stdout（现状），诊断到 stderr。
 - `--quiet`：抑制 stderr 信息（错误仍输出）。
-- 移除每条命令后自动打印 events；仅在 `plt events` 或显式 `--events` 时输出。
+- 移除每条命令后自动打印 events；仅在显式运行 `plt events` 时输出。
 
 **验证**
 
@@ -320,30 +321,30 @@ interface CollectReport {
 
 ## 5. P1 增量
 
-### Increment 5 — tab 语义统一（单一状态）
+### Increment 5 — tab 语义统一（current target）
 
-**结果**：激活 tab 就等于改变 current tab；不再区分 active / current 两套状态。
+**结果**：server 维护单一 current target；`plt tabs` 同时区分浏览器 active tab 与 current target，避免把两者混为一谈。
 
 **CLI**
 
 - `plt tab <id>`：激活并设置服务端 current tab（后续命令默认目标）。
 - `plt tab-new <url>`：新建、激活并设为 current。
 - `plt tab-close [id]`：关闭；若关闭 current，服务端清除/回退；`--tab` 与位置参数互斥。
-- `plt tabs`：`*` 标记当前 active/current（同一个标记，不再区分）。
+- `plt tabs`：`*` 标记浏览器 active tab，`>` 标记 server current target（可能不同）。
 - 不新增 `tab-use` / `tab-focus`。
 
 **实现要点**
 
 - 确保 `activate-tab`/`tab` 的结果回写 server target；补 E2E 验证。
 - `close-tab` 后由现有 `tab.removed` 事件清除 target；补时序测试。
-- `--tab` 仍是每命令覆盖，不改变默认目标。
+- `--tab` 是每命令覆盖；成功命令会把结果 `tabId` 回写为 current（router 行为），后续不带 `--tab` 的命令使用该 tab；浏览器手动激活只更新 fallback，不自动改 current。
 
 **验证**
 
 - E2E：A/B 两个 tab；`tab A` → 无 `--tab` 的 extract 命中 A；`tab B` → 命中 B；`tab-close B` → current 清除/回退。
 - 单测：`--tab` + `tab-close <id>` 冲突；target 回写。
 
-**完成标准**：只有一个 `tab` 入口；激活即 current 有测试锁定。
+**完成标准**：只有一个 `tab` 入口；current target 回写、`plt tabs` 的 active/current 标记有测试锁定。
 
 ### Increment 6 — `click-text` 可点击性判定
 
@@ -451,19 +452,19 @@ plt extract --mode forms --selector "#login-form" --json
 
 ## 7. 删除 / 收敛 / 兼容
 
-| 项                                 | 处理                                                               |
-| ---------------------------------- | ------------------------------------------------------------------ |
-| `scroll` 位置参数（`down 850`）    | **直接删除**；报错并提示 `--by 850` / `--to bottom`。              |
-| 每条命令后自动 `🔔 events`         | **删除**；仅 `plt events` 或显式 `--events`。                      |
-| `plt search`                       | **保留**；Google/DDG 搜索继续作为核心命令，不移除。                |
-| `tab` / `--tab` / `tab-close <id>` | 保留 `tab` 单一入口；激活即 current；`tab-close` 与 `--tab` 互斥。 |
-| `--mode structured`                | 保留为调试能力；文档不再作为主推 API。                             |
-| `extract --prettify`               | 移除；需要美化时用 `--json \| jq .`。                              |
-| `screenshot --full`                | 移除/隐藏，未实现前不暴露。                                        |
-| `links` / `forms` 顶级命令         | **删除**；并入 `extract --mode links\|forms`，不保留弃用别名。     |
-| `scroll` smooth 默认               | 改为 `auto`；`--smooth` 显式开启。                                 |
-| 只读模式 / 限流识别 / `--delay`    | **不纳入 v5**；不作为产品能力。                                    |
-| `until-older-than` / `coverage`    | **不纳入 v5**；无法证明完整覆盖，改用 `--repeat` + `observed`。    |
+| 项                                 | 处理                                                                                                           |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `scroll` 位置参数（`down 850`）    | **直接删除**；报错并提示 `--by 850` / `--to bottom`。                                                          |
+| 每条命令后自动 `🔔 events`         | **删除**；仅显式运行 `plt events`。                                                                            |
+| `plt search`                       | **保留**；Google/DDG 搜索继续作为核心命令，不移除。                                                            |
+| `tab` / `--tab` / `tab-close <id>` | 保留 `tab` 单一入口；`tab`/`--tab` 写回 current；`plt tabs` 区分 active/current；`tab-close` 与 `--tab` 互斥。 |
+| `--mode structured`                | 保留为调试能力；文档不再作为主推 API。                                                                         |
+| `extract --prettify`               | 移除；需要美化时用 `--json \| jq .`。                                                                          |
+| `screenshot --full`                | 移除/隐藏，未实现前不暴露。                                                                                    |
+| `links` / `forms` 顶级命令         | **删除**；并入 `extract --mode links\|forms`，不保留弃用别名。                                                 |
+| `scroll` smooth 默认               | 改为 `auto`；`--smooth` 显式开启。                                                                             |
+| 只读模式 / 限流识别 / `--delay`    | **不纳入 v5**；不作为产品能力。                                                                                |
+| `until-older-than` / `coverage`    | **不纳入 v5**；无法证明完整覆盖，改用 `--repeat` + `observed`。                                                |
 
 **兼容策略**：项目仍是 unstable，**不保证向后兼容**。破坏性变更直接删除，不保留弃用别名/兼容 shim；文档只给迁移示例。旧脚本失败是预期行为。
 
@@ -504,18 +505,18 @@ pnpm typecheck && pnpm test && pnpm build && pnpm lint && pnpm format:check
 
 ## 9. 风险与限制
 
-| 风险                         | 影响                     | 缓解                                                          |
-| ---------------------------- | ------------------------ | ------------------------------------------------------------- |
-| X DOM 选择器变化             | 字段抽取失效             | 推荐 `data-testid`；缺失字段 `null`；夹具可替换               |
-| 虚拟列表跳项/重复渲染        | 漏抓或重复               | 小步滚动（≤视口）、去重、`steps` 记录；不承诺完整覆盖         |
-| 后台标签页节流               | scroll 无效              | collect 默认激活；scroll 可 `--focus`；`visibilityState` 警告 |
-| 相对时间不可靠               | 时间判断错误             | 强制从 `<time datetime>` 读取；`observed` 仅信息性            |
-| `--fields` 分隔符/复杂选择器 | 解析歧义                 | `--fields-file` JSON；转义规则；单测覆盖                      |
-| collect 长时间运行           | 阻塞/超时                | `--repeat`/`--max-items`；固定轮次可中断                      |
-| `--repeat` 不保证时间窗口    | 可能多抓或漏抓           | 明确文档：repeat 是轮次，不是覆盖承诺                         |
-| 破坏性 CLI 变更              | 旧脚本失败               | 明确报错 + 迁移表；pre-1.0 集中处理                           |
-| `links/forms` mode 作用域    | 误采集                   | 统一 `scopedQuery` + `/scope` 回归夹具                        |
-| tab 激活即 current           | `--focus` 会切换默认目标 | 文档明确；`--tab` 仍是每命令覆盖                              |
+| 风险                         | 影响                       | 缓解                                                          |
+| ---------------------------- | -------------------------- | ------------------------------------------------------------- |
+| X DOM 选择器变化             | 字段抽取失效               | 推荐 `data-testid`；缺失字段 `null`；夹具可替换               |
+| 虚拟列表跳项/重复渲染        | 漏抓或重复                 | 小步滚动（≤视口）、去重、`steps` 记录；不承诺完整覆盖         |
+| 后台标签页节流               | scroll 无效                | collect 默认激活；scroll 可 `--focus`；`visibilityState` 警告 |
+| 相对时间不可靠               | 时间判断错误               | 强制从 `<time datetime>` 读取；`observed` 仅信息性            |
+| `--fields` 分隔符/复杂选择器 | 解析歧义                   | `--fields-file` JSON；转义规则；单测覆盖                      |
+| collect 长时间运行           | 阻塞/超时                  | `--repeat`/`--max-items`；固定轮次可中断                      |
+| `--repeat` 不保证时间窗口    | 可能多抓或漏抓             | 明确文档：repeat 是轮次，不是覆盖承诺                         |
+| 破坏性 CLI 变更              | 旧脚本失败                 | 明确报错 + 迁移表；pre-1.0 集中处理                           |
+| `links/forms` mode 作用域    | 误采集                     | 统一 `scopedQuery` + `/scope` 回归夹具                        |
+| tab active/current 可分离    | `--tab`/手动切换后可能误判 | `plt tabs` 用 `*`/`>` 分列；`--tab` 仍是每命令覆盖            |
 
 ## 10. 未决事项
 
@@ -524,11 +525,11 @@ pnpm typecheck && pnpm test && pnpm build && pnpm lint && pnpm format:check
 ## 已确认决策
 
 1. `scroll` 位置参数**直接删除**。
-2. `--settle` 默认开启，接受额外等待。
+2. settle 默认开启，接受额外等待。
 3. 缺失字段默认 `null`。
 4. 不做 coverage；**用 `--repeat` 替代 `until-older-than`**。
 5. `collect` 默认激活目标 tab 可接受。
-6. tab 只保留一个状态：**激活即 current tab**，不区分 active/current。
+6. tab 只保留一个 current target；`plt tabs` 分列浏览器 active 与 server current，避免混淆。
 7. `click-text` 歧义可报错，但先按“可点击性”过滤纯文本；只有一个可点击目标时直接执行。
 8. **不做只读模式**。
 9. **保留 `search`**；上一轮是使用方式问题。
@@ -612,7 +613,7 @@ pnpm typecheck && pnpm test && pnpm build && pnpm lint && pnpm format:check
 ### 最终验证（2026-11-03）
 
 - `pnpm typecheck` ✅
-- `pnpm test`：protocol 40 / server 59 / extension 96（195）✅
+- `pnpm test`：protocol 40 / server 62 / extension 97（199）✅
 - `pnpm test:e2e`：**42 passed** ✅
 - `pnpm lint` / `pnpm format:check` ✅
 - 兼容性：按 unstable 策略直接删除旧 CLI/wire 入口（links/forms、scroll 位置参数、`--prettify`、`screenshot --full`）。

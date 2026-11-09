@@ -352,6 +352,7 @@ function applyDefaultAction(
   }
 }
 
+/** Resolve on the next animation frame, bounded by a timer for hidden documents. */
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
     let done = false;
@@ -390,14 +391,50 @@ async function settleScroll(read: () => number, maxMs = 1000): Promise<boolean> 
   return false;
 }
 
+/** Snapshot page and scrollable-ancestor offsets for scroll settling. */
+function scrollOffsets(el: Element): string {
+  const parts = [`${window.scrollX},${window.scrollY}`];
+  let current = el.parentElement;
+  while (current !== null) {
+    const style = getComputedStyle(current);
+    if (/(auto|scroll|overlay|hidden)/.test(`${style.overflowX} ${style.overflowY}`)) {
+      parts.push(`${current.scrollLeft},${current.scrollTop}`);
+    }
+    current = current.parentElement;
+  }
+  return parts.join('|');
+}
+
+/** Wait until a composite position signature is unchanged for 2 frames. */
+async function settleSignature(read: () => string, maxMs = 1000): Promise<boolean> {
+  const start = Date.now();
+  let last = read();
+  let stable = 0;
+  while (Date.now() - start < maxMs) {
+    await nextFrame();
+    const current = read();
+    if (current === last) {
+      stable += 1;
+      if (stable >= 2) return true;
+    } else {
+      stable = 0;
+      last = current;
+    }
+  }
+  return false;
+}
+
+/** Normalize document.visibilityState for the wire contract. */
 function visibilityOf(doc: Document): 'visible' | 'hidden' {
   return doc.visibilityState === 'hidden' ? 'hidden' : 'visible';
 }
 
+/** Return a warning when the target document is hidden. */
 function backgroundWarning(doc: Document): 'BACKGROUND_TAB' | undefined {
   return visibilityOf(doc) === 'hidden' ? 'BACKGROUND_TAB' : undefined;
 }
 
+/** Read page scroll metrics (with viewport fallbacks). */
 function pageMetrics(doc: Document): ScrollMetrics {
   const el = doc.scrollingElement ?? doc.documentElement;
   return {
@@ -410,6 +447,7 @@ function pageMetrics(doc: Document): ScrollMetrics {
   };
 }
 
+/** Read an element's own scroll metrics. */
 function elementMetrics(el: HTMLElement): ScrollMetrics {
   return {
     scrollTop: el.scrollTop,
@@ -421,6 +459,7 @@ function elementMetrics(el: HTMLElement): ScrollMetrics {
   };
 }
 
+/** Throw the structured NO_EFFECT error for a zero-delta scroll. */
 function noEffectError(result: ScrollResult): never {
   throw Object.assign(
     new Error(`scroll had no effect (atTop=${result.atTop}, atBottom=${result.atBottom})`),
@@ -436,12 +475,14 @@ function noEffectError(result: ScrollResult): never {
   );
 }
 
+/** Enforce NO_EFFECT unless the caller explicitly allows a no-op. */
 function assertEffect(result: ScrollResult, allowNoop: boolean): ScrollResult {
   if (allowNoop) return result;
   if (result.delta.x === 0 && result.delta.y === 0) noEffectError(result);
   return result;
 }
 
+/** Scroll the page and return verifiable before/after state. */
 async function scrollPage(doc: Document, params: Record<string, unknown>): Promise<ScrollResult> {
   const before = { x: window.scrollX, y: window.scrollY };
   const metricsBefore = pageMetrics(doc);
@@ -477,6 +518,7 @@ async function scrollPage(doc: Document, params: Record<string, unknown>): Promi
   return assertEffect(result, params.allowNoop === true);
 }
 
+/** Scroll an element's own overflow content and return verifiable state. */
 async function scrollElement(
   doc: Document,
   el: Element,
@@ -520,6 +562,7 @@ async function scrollElement(
   return assertEffect(result, params.allowNoop === true);
 }
 
+/** Bring an element into view, settle page/ancestors, and report its new box. */
 async function scrollToElement(
   doc: Document,
   params: Record<string, unknown>,
@@ -530,11 +573,19 @@ async function scrollToElement(
     behavior: params.smooth === true ? 'smooth' : 'auto',
     block: 'center',
   });
-  const settled = params.settle === false ? false : await settleScroll(() => window.scrollY, 1000);
+  const settled =
+    params.settle === false
+      ? false
+      : await settleSignature(() => scrollOffsets(located.element), 1000);
+  if (!located.element.isConnected) {
+    throw Object.assign(new Error('target was replaced while scrolling'), {
+      code: 'TARGET_NOT_FOUND',
+    });
+  }
   const after = { x: window.scrollX, y: window.scrollY };
   const metrics = pageMetrics(doc);
   const result: ScrollToResult = {
-    element: located.info,
+    element: toElementInfo(located.element),
     target: 'page',
     before,
     after,
