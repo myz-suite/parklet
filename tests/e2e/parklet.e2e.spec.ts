@@ -1,4 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -93,6 +95,161 @@ test('goto 驱动本地页面并返回 context 快照', async ({ session }) => {
   expect(goto.context?.navId).toBeGreaterThanOrEqual(1);
   await session.page.waitForURL(url, { timeout: 20_000 });
   expect(session.page.url()).toBe(url);
+});
+
+test('back / forward / reload 走 tabs API 并返回新 context', async ({ session }) => {
+  const first = `${session.web.url}/list`;
+  const second = `${session.web.url}/target-page`;
+
+  await command(session.serverUrl, 'goto', { url: first }, { tabId: session.tabId });
+  await session.page.waitForURL(first, { timeout: 20_000 });
+  await command(session.serverUrl, 'goto', { url: second }, { tabId: session.tabId });
+  await session.page.waitForURL(second, { timeout: 20_000 });
+
+  const back = (await command(session.serverUrl, 'back', {}, { tabId: session.tabId })) as {
+    context?: { url?: string };
+  };
+  expect(back.context?.url).toBe(first);
+  await session.page.waitForURL(first, { timeout: 20_000 });
+
+  const forward = (await command(session.serverUrl, 'forward', {}, { tabId: session.tabId })) as {
+    context?: { url?: string };
+  };
+  expect(forward.context?.url).toBe(second);
+  await session.page.waitForURL(second, { timeout: 20_000 });
+
+  const reload = (await command(session.serverUrl, 'reload', {}, { tabId: session.tabId })) as {
+    context?: { url?: string };
+  };
+  expect(reload.context?.url).toBe(second);
+});
+
+test('无历史时 back / forward 返回 NO_EFFECT（exit 3），不落 INTERNAL', async ({ session }) => {
+  const created = (await command(session.serverUrl, 'create-tab', {
+    url: `${session.web.url}/`,
+  })) as { data?: { tab?: { id?: number } } };
+  const freshTabId = created.data?.tab?.id;
+  if (typeof freshTabId !== 'number') throw new Error('create-tab did not return a tab id');
+
+  for (const method of ['back', 'forward'] as const) {
+    const res = await runCli(session.serverUrl, [method, '--tab', String(freshTabId)]);
+    expect(res.code).toBe(3);
+    expect(res.stderr).toContain('NO_EFFECT');
+    expect(res.stderr).not.toContain('INTERNAL');
+  }
+});
+
+test('goto 可从不可注入页面（chrome://newtab）离开', async ({ session }) => {
+  await session.sw.evaluate(
+    async ({ tabId, url }) => {
+      await chrome.tabs.update(tabId, { url });
+    },
+    { tabId: session.tabId, url: 'chrome://newtab/' },
+  );
+  await session.page.waitForURL('chrome://new-tab-page/', { timeout: 20_000 });
+
+  const target = `${session.web.url}/target-page`;
+  const goto = (await command(
+    session.serverUrl,
+    'goto',
+    { url: target },
+    { tabId: session.tabId },
+  )) as {
+    context?: { url?: string };
+  };
+  expect(goto.context?.url).toBe(target);
+});
+
+test('goto 只接受 http(s)，其他 scheme 返回 URL_INVALID', async ({ session }) => {
+  const res = await runCli(session.serverUrl, [
+    'goto',
+    'chrome://newtab',
+    '--tab',
+    String(session.tabId),
+  ]);
+  expect(res.code).toBe(3);
+  expect(res.stderr).toContain('URL_INVALID');
+});
+
+test('chrome://newtab 上 extract / click 返回 ORIGIN_BLOCKED（exit 3）', async ({ session }) => {
+  await session.sw.evaluate(
+    async ({ tabId, url }) => {
+      await chrome.tabs.update(tabId, { url });
+    },
+    { tabId: session.tabId, url: 'chrome://newtab/' },
+  );
+  await session.page.waitForURL('chrome://new-tab-page/', { timeout: 20_000 });
+
+  for (const args of [['extract'], ['click', 'body']]) {
+    const res = await runCli(session.serverUrl, [...args, '--tab', String(session.tabId)]);
+    expect(res.code).toBe(3);
+    expect(res.stderr).toContain('[ORIGIN_BLOCKED]');
+    expect(res.stderr).toContain('plt goto');
+    expect(res.stderr).not.toContain('handle it manually');
+  }
+});
+
+test('受保护页上的 tab 管理类失败仍是 TAB_CLOSED，不误报 ORIGIN_BLOCKED', async ({ session }) => {
+  await session.sw.evaluate(
+    async ({ tabId, url }) => {
+      await chrome.tabs.update(tabId, { url });
+    },
+    { tabId: session.tabId, url: 'chrome://newtab/' },
+  );
+  await session.page.waitForURL('chrome://new-tab-page/', { timeout: 20_000 });
+
+  const res = await runCli(session.serverUrl, ['tab', '999999']);
+  expect(res.code).toBe(3);
+  expect(res.stderr).toContain('[TAB_CLOSED]');
+  expect(res.stderr).not.toContain('ORIGIN_BLOCKED');
+});
+
+test('logs / events 对非 2xx 或缺字段的响应报错而不是崩溃', async () => {
+  const stub = createServer((req, res) => {
+    if (req.url?.startsWith('/api/ledger')) {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { code: 'INTERNAL', message: 'boom' } }));
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({}));
+  });
+  await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
+  const { port } = stub.address() as AddressInfo;
+  try {
+    const base = `http://127.0.0.1:${port}`;
+
+    const logs = await runCli(base, ['logs']);
+    expect(logs.code).toBe(4);
+    expect(logs.stderr).toContain('[INTERNAL]');
+    expect(logs.stderr).toContain('boom');
+
+    const events = await runCli(base, ['events']);
+    expect(events.code).toBe(4);
+    expect(events.stderr).toContain("missing 'events'");
+  } finally {
+    await new Promise<void>((resolve) => stub.close(() => resolve()));
+  }
+});
+
+test('logs / events 对 200 + null body 报 INTERNAL 而不是 EXTENSION_OFFLINE', async () => {
+  const stub = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('null');
+  });
+  await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
+  const { port } = stub.address() as AddressInfo;
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (const args of [['logs'], ['events']]) {
+      const res = await runCli(base, args);
+      expect(res.code).toBe(4);
+      expect(res.stderr).toContain('[INTERNAL]');
+      expect(res.stderr).not.toContain('EXTENSION_OFFLINE');
+    }
+  } finally {
+    await new Promise<void>((resolve) => stub.close(() => resolve()));
+  }
 });
 
 test('当前 tab 连续性：后续命令复用同一目标并感知导航', async ({ session }) => {

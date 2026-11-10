@@ -627,6 +627,7 @@ function toDomQueryMatch(el: Element): DomQueryMatch {
   return match;
 }
 
+/** content 侧命令入口：按 method 执行页面 DOM 操作并返回结果。 */
 export async function executeDomAction(
   method: string,
   params: Record<string, unknown>,
@@ -635,21 +636,6 @@ export async function executeDomAction(
   navId: number,
 ): Promise<unknown> {
   switch (method) {
-    case 'goto': {
-      const url = String(params.url ?? '');
-      doc.location.assign(url);
-      return {};
-    }
-    case 'back':
-      history.back();
-      return {};
-    case 'forward':
-      history.forward();
-      return {};
-    case 'reload':
-      doc.location.reload();
-      return {};
-
     case 'click': {
       const l = locate(doc, 'click', params);
       (l.element as HTMLElement).click();

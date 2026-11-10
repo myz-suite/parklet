@@ -41,6 +41,7 @@ export function startHttp(deps: HttpDeps): HttpServer {
   });
 }
 
+/** 处理单个 HTTP 请求：路由到命令/事件/账本端点，兜底写统一 JSON 错误。 */
 async function handle(req: IncomingMessage, res: ServerResponse, deps: HttpDeps): Promise<void> {
   try {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -110,9 +111,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: HttpDeps)
       return;
     }
 
-    respondJson(res, 404, { error: 'not found' });
+    respondJson(res, 404, { error: { code: 'INVALID_REQUEST', message: 'not found' } });
   } catch (err) {
-    respondJson(res, 500, { error: `internal: ${String(err)}` });
+    respondJson(res, 500, { error: { code: 'INTERNAL', message: String(err) } });
   }
 }
 
@@ -151,6 +152,7 @@ function readBody(req: IncomingMessage): Promise<string | null> {
   });
 }
 
+/** 统一 JSON 响应：写状态码、Content-Type 与 Content-Length 后结束请求。 */
 export function respondJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {

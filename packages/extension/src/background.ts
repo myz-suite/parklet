@@ -13,6 +13,7 @@ import type {
   PopupRequest,
   PopupResponse,
 } from './shared/messages.js';
+import { markInjectionFailure, normalizeError } from './error-policy.js';
 import { buildSearchUrl } from './dom/searchUrl.js';
 import { computeCropRect, type ElementRectInfo } from './dom/screenshot.js';
 import { badgeFor, guidanceFor, statusLabel, type ConnState } from './status.js';
@@ -286,6 +287,30 @@ function waitForNavigation(tabId: number, timeoutMs = 8000): Promise<void> {
   });
 }
 
+/** chrome.tabs.goBack/goForward 无历史时的原始文案；只转换这一种，其余原样交给 normalizeError。 */
+const NO_HISTORY_RE = /cannot find a (next|previous) page in history|no (next|previous) page/i;
+
+/** 把 goBack/goForward 的「无历史」reject 转成 NO_EFFECT；其余错误原样返回。 */
+function toNoEffect(err: unknown): unknown {
+  const message = (err as Error)?.message ?? String(err);
+  if (NO_HISTORY_RE.test(message)) return code('NO_EFFECT', message);
+  return err;
+}
+
+/** goto 只允许 http(s)：其他 scheme 抛 URL_INVALID，不再尝试注入旧页面。 */
+function parseHttpUrl(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw code('URL_INVALID', `invalid URL: ${raw}`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw code('URL_INVALID', `invalid URL: ${raw}`);
+  }
+  return raw;
+}
+
 // ---------------------------------------------------------------------------
 // 命令处理
 // ---------------------------------------------------------------------------
@@ -310,35 +335,21 @@ interface WireRequest {
   params?: unknown;
 }
 
-/** chrome.tabs 的"tab 已不存在"错误文案（不同路径措辞略有差异），统一映射为 TAB_CLOSED。 */
-const TAB_GONE_RE = /no tab with id|invalid tab id|no tab with id:|tab was closed/i;
-
-function normalizeError(err: unknown): {
-  code: ProtocolError['error']['code'];
-  message: string;
-  data?: Record<string, unknown>;
-} {
-  const e = err as Error & { code?: string; data?: Record<string, unknown> };
-  const message = e?.message ?? String(err);
-  if (typeof e?.code === 'string') {
-    return {
-      code: e.code as ProtocolError['error']['code'],
-      message,
-      ...(e.data !== undefined ? { data: e.data } : {}),
-    };
-  }
-  if (TAB_GONE_RE.test(message)) {
-    return { code: 'TAB_CLOSED', message };
-  }
-  return { code: 'INTERNAL', message };
-}
-
+/** 执行命令并把成功/失败写回 wire；失败出口统一经 normalizeError 分类。 */
 async function handleCommand(req: Request): Promise<void> {
   try {
     const result = await dispatchCommand(req);
     sendWire({ id: req.id, result } as unknown as Response);
   } catch (err) {
-    const { code: errCode, message, data } = normalizeError(err);
+    // 失败出口按目标 tab 的 URL 判断是否属于禁止脚本化的 origin；取不到就跳过，不额外抛错。
+    let tabUrl: string | undefined;
+    try {
+      const tabId = req.tabId ?? (await activeTabId());
+      if (tabId !== undefined) tabUrl = (await chrome.tabs.get(tabId)).url;
+    } catch {
+      /* tab 已关闭等：origin 判定跳过 */
+    }
+    const { code: errCode, message, data } = normalizeError(err, tabUrl);
     sendWire({
       id: req.id,
       error: { code: errCode, message, ...(data !== undefined ? { data } : {}) },
@@ -346,6 +357,7 @@ async function handleCommand(req: Request): Promise<void> {
   }
 }
 
+/** 按 method 分发命令：导航类走 chrome.tabs，其余转发 content script。 */
 async function dispatchCommand(req: Request): Promise<WireResult> {
   const tabId = req.tabId ?? (await activeTabId());
   if (tabId === undefined) {
@@ -457,15 +469,30 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
       break;
   }
 
-  // 导航类：content 执行 → 等待主框架导航 → 响应携带新 navId
-  if (
-    req.method === 'goto' ||
-    req.method === 'back' ||
-    req.method === 'forward' ||
-    req.method === 'reload'
-  ) {
-    await sendToContent(req, tabId);
-    await waitForNavigation(tabId);
+  // 导航类：走 chrome.tabs（不要求旧页面可注入，CWS / chrome:// 页面也能离开），同一 tab 等待主框架导航
+  if (req.method === 'goto') {
+    const raw = String((req.params as { url?: unknown } | undefined)?.url ?? '');
+    const url = parseHttpUrl(raw);
+    const nav = waitForNavigation(tabId);
+    await chrome.tabs.update(tabId, { url });
+    await nav;
+    return { tabId, context: await contextOf(tabId), data: {} };
+  }
+  if (req.method === 'back' || req.method === 'forward') {
+    const nav = waitForNavigation(tabId);
+    try {
+      if (req.method === 'back') await chrome.tabs.goBack(tabId);
+      else await chrome.tabs.goForward(tabId);
+    } catch (err) {
+      throw toNoEffect(err);
+    }
+    await nav;
+    return { tabId, context: await contextOf(tabId), data: {} };
+  }
+  if (req.method === 'reload') {
+    const nav = waitForNavigation(tabId);
+    await chrome.tabs.reload(tabId);
+    await nav;
     return { tabId, context: await contextOf(tabId), data: {} };
   }
 
@@ -491,6 +518,8 @@ interface EvalOutcome {
   message?: string;
 }
 
+const CSP_BLOCKED_RE = /content security policy|\bcsp\b/i;
+
 /**
  * 在页面 **MAIN world** 执行 eval。注入函数必须自包含（Chrome 序列化函数体，无法引用外部导入）。
  * 隔离世界的 `new Function` 被 MV3 扩展 CSP 恒定为不允许 `unsafe-eval` 阻断（已用真实 Chromium 验证）；
@@ -508,7 +537,12 @@ async function handleEval(req: Request, tabId: number): Promise<WireResult> {
     });
     outcome = results[0]?.result as EvalOutcome | undefined;
   } catch (err) {
-    throw code('INTERNAL', `eval injection failed (page CSP?): ${(err as Error).message}`);
+    const message = (err as Error)?.message ?? String(err);
+    // CSP 拦截保留原来的提示；其余失败原样交给 normalizeError 统一分类。
+    if (CSP_BLOCKED_RE.test(message)) {
+      throw code('INTERNAL', `eval injection failed (page CSP?): ${message}`);
+    }
+    throw markInjectionFailure(err);
   }
   if (outcome === undefined || outcome.ok !== true) {
     throw code(
@@ -573,6 +607,7 @@ async function handleSearch(req: Request, tabId: number): Promise<WireResult> {
   };
 }
 
+/** 通过 content script 执行页面命令；注入失败打标记，供 normalizeError 做 origin 分类。 */
 async function sendToContent(req: WireRequest, tabId: number): Promise<unknown> {
   const msg: ContentCommand = {
     type: 'pl:command',
@@ -592,11 +627,15 @@ async function sendToContent(req: WireRequest, tabId: number): Promise<unknown> 
       text.includes('Receiving end does not exist') ||
       text.includes('Could not establish connection')
     ) {
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-      const reply = (await chrome.tabs.sendMessage(tabId, msg)) as ContentResult | undefined;
-      return unwrapContentReply(reply, req.id);
+      try {
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+        const reply = (await chrome.tabs.sendMessage(tabId, msg)) as ContentResult | undefined;
+        return unwrapContentReply(reply, req.id);
+      } catch (retryErr) {
+        throw markInjectionFailure(retryErr);
+      }
     }
-    throw err;
+    throw markInjectionFailure(err);
   }
 }
 
