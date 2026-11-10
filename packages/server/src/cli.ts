@@ -92,6 +92,32 @@ function serverUnreachable(base: string, err: unknown): Error & { code: 'EXTENSI
   });
 }
 
+/**
+ * 校验并读取 JSON 响应：非 2xx、无法解析或缺少 `field` 数组都转成带 code 的错误，
+ * 避免调用方拿到 undefined / 非预期形状。
+ */
+async function readJsonField<T>(
+  res: Awaited<ReturnType<typeof fetch>>,
+  base: string,
+  field: string,
+): Promise<T> {
+  const body = (await res.json().catch(() => undefined)) as
+    (Record<string, unknown> & { error?: { message?: unknown } }) | undefined;
+  if (!res.ok) {
+    const detail =
+      typeof body?.error?.message === 'string' ? body.error.message : `HTTP ${res.status}`;
+    throw Object.assign(new Error(`server error at ${base}: ${detail}`), {
+      code: 'INTERNAL' as const,
+    });
+  }
+  if (body === undefined || !Array.isArray(body[field])) {
+    throw Object.assign(new Error(`unexpected response from ${base}: missing '${field}'`), {
+      code: 'INTERNAL' as const,
+    });
+  }
+  return body as T;
+}
+
 async function fetchLedger(
   opts: GlobalOpts,
   tail: number,
@@ -102,7 +128,7 @@ async function fetchLedger(
   }).catch((err: unknown) => {
     throw serverUnreachable(base, err);
   });
-  return (await res.json()) as { entries: Array<Record<string, unknown>> };
+  return readJsonField<{ entries: Array<Record<string, unknown>> }>(res, base, 'entries');
 }
 
 async function fetchEvents(
@@ -114,7 +140,7 @@ async function fetchEvents(
   }).catch((err: unknown) => {
     throw serverUnreachable(base, err);
   });
-  return (await res.json()) as { events: CachedEvent[]; unreadCount: number };
+  return readJsonField<{ events: CachedEvent[]; unreadCount: number }>(res, base, 'events');
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +580,7 @@ async function run(
   }
 }
 
+/** 构造 `plt` 的 commander 程序（CLI 入口与嵌入使用共用）。 */
 export function buildProgram(): Command {
   const program = new Command()
     .name('plt')

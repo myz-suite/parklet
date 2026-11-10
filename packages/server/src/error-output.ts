@@ -5,6 +5,7 @@ import { isErrorCode, type ErrorCode, type ProtocolError } from '@parklet/protoc
  * `{"error":{"code","message"}}`），并给出稳定退出码。
  */
 
+/** 协议错误码 → 进程退出码；未知或缺省按 1。 */
 export function exitCodeFor(code: ErrorCode | undefined): number {
   switch (code) {
     case 'INVALID_REQUEST':
@@ -43,16 +44,19 @@ function toOutputError(error: unknown): ProtocolError['error'] {
   return { code: 'INTERNAL', message: String(error) };
 }
 
+/** 错误输出的格式选项：`json` 决定打 `{"error":…}` 还是 `✖ [CODE] message`。 */
 export interface OutputOpts {
   json?: boolean;
 }
 
+/** 打印协议错误（--json 时输出 `{"error":{code,message}}`）。 */
 export function printError(error: unknown, opts: OutputOpts): void {
   const normalized = toOutputError(error);
   if (opts.json === true) console.log(JSON.stringify({ error: normalized }));
   else console.error(`✖ [${normalized.code}] ${normalized.message}`);
 }
 
+/** 打印 CLI 本地错误：保留错误自带的 code，否则用 fallback，并设置退出码。 */
 export function reportLocalError(
   err: unknown,
   opts: Record<string, unknown>,

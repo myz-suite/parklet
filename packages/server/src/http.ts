@@ -151,6 +151,7 @@ function readBody(req: IncomingMessage): Promise<string | null> {
   });
 }
 
+/** 统一 JSON 响应：写状态码、Content-Type 与 Content-Length 后结束请求。 */
 export function respondJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {

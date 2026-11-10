@@ -13,7 +13,7 @@ import type {
   PopupRequest,
   PopupResponse,
 } from './shared/messages.js';
-import { normalizeError } from './error-policy.js';
+import { markInjectionFailure, normalizeError } from './error-policy.js';
 import { buildSearchUrl } from './dom/searchUrl.js';
 import { computeCropRect, type ElementRectInfo } from './dom/screenshot.js';
 import { badgeFor, guidanceFor, statusLabel, type ConnState } from './status.js';
@@ -520,6 +520,8 @@ interface EvalOutcome {
  * 隔离世界的 `new Function` 被 MV3 扩展 CSP 恒定为不允许 `unsafe-eval` 阻断（已用真实 Chromium 验证）；
  * MAIN world 不受扩展 CSP 约束、但**受页面 CSP 约束**：严格 CSP 站点会返回错误。
  */
+const CSP_BLOCKED_RE = /content security policy|\bcsp\b/i;
+
 async function handleEval(req: Request, tabId: number): Promise<WireResult> {
   const script = String((req.params as { script?: unknown }).script ?? '');
   let outcome: EvalOutcome | undefined;
@@ -532,7 +534,12 @@ async function handleEval(req: Request, tabId: number): Promise<WireResult> {
     });
     outcome = results[0]?.result as EvalOutcome | undefined;
   } catch (err) {
-    throw code('INTERNAL', `eval injection failed (page CSP?): ${(err as Error).message}`);
+    const message = (err as Error)?.message ?? String(err);
+    // CSP 拦截保留原来的提示；其余失败原样交给 normalizeError 统一分类。
+    if (CSP_BLOCKED_RE.test(message)) {
+      throw code('INTERNAL', `eval injection failed (page CSP?): ${message}`);
+    }
+    throw markInjectionFailure(err);
   }
   if (outcome === undefined || outcome.ok !== true) {
     throw code(
@@ -616,11 +623,15 @@ async function sendToContent(req: WireRequest, tabId: number): Promise<unknown> 
       text.includes('Receiving end does not exist') ||
       text.includes('Could not establish connection')
     ) {
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-      const reply = (await chrome.tabs.sendMessage(tabId, msg)) as ContentResult | undefined;
-      return unwrapContentReply(reply, req.id);
+      try {
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+        const reply = (await chrome.tabs.sendMessage(tabId, msg)) as ContentResult | undefined;
+        return unwrapContentReply(reply, req.id);
+      } catch (retryErr) {
+        throw markInjectionFailure(retryErr);
+      }
     }
-    throw err;
+    throw markInjectionFailure(err);
   }
 }
 
