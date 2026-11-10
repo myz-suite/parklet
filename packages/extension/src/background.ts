@@ -518,13 +518,13 @@ interface EvalOutcome {
   message?: string;
 }
 
+const CSP_BLOCKED_RE = /content security policy|\bcsp\b/i;
+
 /**
  * 在页面 **MAIN world** 执行 eval。注入函数必须自包含（Chrome 序列化函数体，无法引用外部导入）。
  * 隔离世界的 `new Function` 被 MV3 扩展 CSP 恒定为不允许 `unsafe-eval` 阻断（已用真实 Chromium 验证）；
  * MAIN world 不受扩展 CSP 约束、但**受页面 CSP 约束**：严格 CSP 站点会返回错误。
  */
-const CSP_BLOCKED_RE = /content security policy|\bcsp\b/i;
-
 async function handleEval(req: Request, tabId: number): Promise<WireResult> {
   const script = String((req.params as { script?: unknown }).script ?? '');
   let outcome: EvalOutcome | undefined;

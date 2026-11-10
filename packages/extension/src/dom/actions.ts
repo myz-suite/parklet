@@ -627,6 +627,7 @@ function toDomQueryMatch(el: Element): DomQueryMatch {
   return match;
 }
 
+/** content 侧命令入口：按 method 执行页面 DOM 操作并返回结果。 */
 export async function executeDomAction(
   method: string,
   params: Record<string, unknown>,
