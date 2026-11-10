@@ -95,6 +95,80 @@ test('goto 驱动本地页面并返回 context 快照', async ({ session }) => {
   expect(session.page.url()).toBe(url);
 });
 
+test('back / forward / reload 走 tabs API 并返回新 context', async ({ session }) => {
+  const first = `${session.web.url}/list`;
+  const second = `${session.web.url}/target-page`;
+
+  await command(session.serverUrl, 'goto', { url: first }, { tabId: session.tabId });
+  await session.page.waitForURL(first, { timeout: 20_000 });
+  await command(session.serverUrl, 'goto', { url: second }, { tabId: session.tabId });
+  await session.page.waitForURL(second, { timeout: 20_000 });
+
+  const back = (await command(session.serverUrl, 'back', {}, { tabId: session.tabId })) as {
+    context?: { url?: string };
+  };
+  expect(back.context?.url).toBe(first);
+  await session.page.waitForURL(first, { timeout: 20_000 });
+
+  const forward = (await command(session.serverUrl, 'forward', {}, { tabId: session.tabId })) as {
+    context?: { url?: string };
+  };
+  expect(forward.context?.url).toBe(second);
+  await session.page.waitForURL(second, { timeout: 20_000 });
+
+  const reload = (await command(session.serverUrl, 'reload', {}, { tabId: session.tabId })) as {
+    context?: { url?: string };
+  };
+  expect(reload.context?.url).toBe(second);
+});
+
+test('无历史时 back / forward 返回 NO_EFFECT（exit 3），不落 INTERNAL', async ({ session }) => {
+  const created = (await command(session.serverUrl, 'create-tab', {
+    url: `${session.web.url}/`,
+  })) as { data?: { tab?: { id?: number } } };
+  const freshTabId = created.data?.tab?.id;
+  if (typeof freshTabId !== 'number') throw new Error('create-tab did not return a tab id');
+
+  for (const method of ['back', 'forward'] as const) {
+    const res = await runCli(session.serverUrl, [method, '--tab', String(freshTabId)]);
+    expect(res.code).toBe(3);
+    expect(res.stderr).toContain('NO_EFFECT');
+    expect(res.stderr).not.toContain('INTERNAL');
+  }
+});
+
+test('goto 可从不可注入页面（chrome://newtab）离开', async ({ session }) => {
+  await session.sw.evaluate(
+    async ({ tabId, url }) => {
+      await chrome.tabs.update(tabId, { url });
+    },
+    { tabId: session.tabId, url: 'chrome://newtab/' },
+  );
+  await session.page.waitForURL('chrome://new-tab-page/', { timeout: 20_000 });
+
+  const target = `${session.web.url}/target-page`;
+  const goto = (await command(
+    session.serverUrl,
+    'goto',
+    { url: target },
+    { tabId: session.tabId },
+  )) as {
+    context?: { url?: string };
+  };
+  expect(goto.context?.url).toBe(target);
+});
+
+test('goto 只接受 http(s)，其他 scheme 返回 URL_INVALID', async ({ session }) => {
+  const res = await runCli(session.serverUrl, [
+    'goto',
+    'chrome://newtab',
+    '--tab',
+    String(session.tabId),
+  ]);
+  expect(res.code).toBe(3);
+  expect(res.stderr).toContain('URL_INVALID');
+});
+
 test('当前 tab 连续性：后续命令复用同一目标并感知导航', async ({ session }) => {
   // 首次 goto 设置当前目标 tab
   const url = `${session.web.url}/list`;

@@ -286,6 +286,29 @@ function waitForNavigation(tabId: number, timeoutMs = 8000): Promise<void> {
   });
 }
 
+/** chrome.tabs.goBack/goForward 无历史时的原始文案；只转换这一种，其余原样交给 normalizeError。 */
+const NO_HISTORY_RE = /cannot find a (next|previous) page in history|no (next|previous) page/i;
+
+function toNoEffect(err: unknown): unknown {
+  const message = (err as Error)?.message ?? String(err);
+  if (NO_HISTORY_RE.test(message)) return code('NO_EFFECT', message);
+  return err;
+}
+
+/** goto 只允许 http(s)：其他 scheme 抛 URL_INVALID，不再尝试注入旧页面。 */
+function parseHttpUrl(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw code('URL_INVALID', `invalid URL: ${raw}`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw code('URL_INVALID', `invalid URL: ${raw}`);
+  }
+  return raw;
+}
+
 // ---------------------------------------------------------------------------
 // 命令处理
 // ---------------------------------------------------------------------------
@@ -457,15 +480,30 @@ async function dispatchCommand(req: Request): Promise<WireResult> {
       break;
   }
 
-  // 导航类：content 执行 → 等待主框架导航 → 响应携带新 navId
-  if (
-    req.method === 'goto' ||
-    req.method === 'back' ||
-    req.method === 'forward' ||
-    req.method === 'reload'
-  ) {
-    await sendToContent(req, tabId);
-    await waitForNavigation(tabId);
+  // 导航类：走 chrome.tabs（不要求旧页面可注入，CWS / chrome:// 页面也能离开），同一 tab 等待主框架导航
+  if (req.method === 'goto') {
+    const raw = String((req.params as { url?: unknown } | undefined)?.url ?? '');
+    const url = parseHttpUrl(raw);
+    const nav = waitForNavigation(tabId);
+    await chrome.tabs.update(tabId, { url });
+    await nav;
+    return { tabId, context: await contextOf(tabId), data: {} };
+  }
+  if (req.method === 'back' || req.method === 'forward') {
+    const nav = waitForNavigation(tabId);
+    try {
+      if (req.method === 'back') await chrome.tabs.goBack(tabId);
+      else await chrome.tabs.goForward(tabId);
+    } catch (err) {
+      throw toNoEffect(err);
+    }
+    await nav;
+    return { tabId, context: await contextOf(tabId), data: {} };
+  }
+  if (req.method === 'reload') {
+    const nav = waitForNavigation(tabId);
+    await chrome.tabs.reload(tabId);
+    await nav;
     return { tabId, context: await contextOf(tabId), data: {} };
   }
 
