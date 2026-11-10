@@ -290,6 +290,7 @@ function waitForNavigation(tabId: number, timeoutMs = 8000): Promise<void> {
 /** chrome.tabs.goBack/goForward 无历史时的原始文案；只转换这一种，其余原样交给 normalizeError。 */
 const NO_HISTORY_RE = /cannot find a (next|previous) page in history|no (next|previous) page/i;
 
+/** 把 goBack/goForward 的「无历史」reject 转成 NO_EFFECT；其余错误原样返回。 */
 function toNoEffect(err: unknown): unknown {
   const message = (err as Error)?.message ?? String(err);
   if (NO_HISTORY_RE.test(message)) return code('NO_EFFECT', message);
@@ -334,6 +335,7 @@ interface WireRequest {
   params?: unknown;
 }
 
+/** 执行命令并把成功/失败写回 wire；失败出口统一经 normalizeError 分类。 */
 async function handleCommand(req: Request): Promise<void> {
   try {
     const result = await dispatchCommand(req);
@@ -355,6 +357,7 @@ async function handleCommand(req: Request): Promise<void> {
   }
 }
 
+/** 按 method 分发命令：导航类走 chrome.tabs，其余转发 content script。 */
 async function dispatchCommand(req: Request): Promise<WireResult> {
   const tabId = req.tabId ?? (await activeTabId());
   if (tabId === undefined) {
@@ -604,6 +607,7 @@ async function handleSearch(req: Request, tabId: number): Promise<WireResult> {
   };
 }
 
+/** 通过 content script 执行页面命令；注入失败打标记，供 normalizeError 做 origin 分类。 */
 async function sendToContent(req: WireRequest, tabId: number): Promise<unknown> {
   const msg: ContentCommand = {
     type: 'pl:command',

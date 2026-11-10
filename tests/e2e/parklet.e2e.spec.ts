@@ -232,6 +232,26 @@ test('logs / events 对非 2xx 或缺字段的响应报错而不是崩溃', asyn
   }
 });
 
+test('logs / events 对 200 + null body 报 INTERNAL 而不是 EXTENSION_OFFLINE', async () => {
+  const stub = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('null');
+  });
+  await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
+  const { port } = stub.address() as AddressInfo;
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (const args of [['logs'], ['events']]) {
+      const res = await runCli(base, args);
+      expect(res.code).toBe(4);
+      expect(res.stderr).toContain('[INTERNAL]');
+      expect(res.stderr).not.toContain('EXTENSION_OFFLINE');
+    }
+  } finally {
+    await new Promise<void>((resolve) => stub.close(() => resolve()));
+  }
+});
+
 test('当前 tab 连续性：后续命令复用同一目标并感知导航', async ({ session }) => {
   // 首次 goto 设置当前目标 tab
   const url = `${session.web.url}/list`;

@@ -93,8 +93,8 @@ function serverUnreachable(base: string, err: unknown): Error & { code: 'EXTENSI
 }
 
 /**
- * 校验并读取 JSON 响应：非 2xx、无法解析或缺少 `field` 数组都转成带 code 的错误，
- * 避免调用方拿到 undefined / 非预期形状。
+ * 校验并读取 JSON 响应：非 2xx、无法解析、body 为 `null` 或缺少 `field` 数组都转成
+ * 带 `INTERNAL` code 的错误（形状问题，不是连不上 server），避免调用方拿到 undefined。
  */
 async function readJsonField<T>(
   res: Awaited<ReturnType<typeof fetch>>,
@@ -102,7 +102,7 @@ async function readJsonField<T>(
   field: string,
 ): Promise<T> {
   const body = (await res.json().catch(() => undefined)) as
-    (Record<string, unknown> & { error?: { message?: unknown } }) | undefined;
+    (Record<string, unknown> & { error?: { message?: unknown } }) | null | undefined;
   if (!res.ok) {
     const detail =
       typeof body?.error?.message === 'string' ? body.error.message : `HTTP ${res.status}`;
@@ -110,7 +110,12 @@ async function readJsonField<T>(
       code: 'INTERNAL' as const,
     });
   }
-  if (body === undefined || !Array.isArray(body[field])) {
+  if (
+    body === undefined ||
+    body === null ||
+    typeof body !== 'object' ||
+    !Array.isArray(body[field])
+  ) {
     throw Object.assign(new Error(`unexpected response from ${base}: missing '${field}'`), {
       code: 'INTERNAL' as const,
     });
@@ -118,6 +123,7 @@ async function readJsonField<T>(
   return body as T;
 }
 
+/** 读取命令账本尾部；HTTP 形状问题抛 INTERNAL，连不上抛 EXTENSION_OFFLINE。 */
 async function fetchLedger(
   opts: GlobalOpts,
   tail: number,
@@ -131,6 +137,7 @@ async function fetchLedger(
   return readJsonField<{ entries: Array<Record<string, unknown>> }>(res, base, 'entries');
 }
 
+/** 读取 tab 生命周期事件（并取未读数）；错误处理同 fetchLedger。 */
 async function fetchEvents(
   opts: GlobalOpts,
 ): Promise<{ events: CachedEvent[]; unreadCount: number }> {

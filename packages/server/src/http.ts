@@ -41,6 +41,7 @@ export function startHttp(deps: HttpDeps): HttpServer {
   });
 }
 
+/** 处理单个 HTTP 请求：路由到命令/事件/账本端点，兜底写统一 JSON 错误。 */
 async function handle(req: IncomingMessage, res: ServerResponse, deps: HttpDeps): Promise<void> {
   try {
     const url = new URL(req.url ?? '/', 'http://localhost');
