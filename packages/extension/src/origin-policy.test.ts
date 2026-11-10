@@ -15,7 +15,6 @@ describe('blockedOriginKind', () => {
     ['chrome://newtab/', 'browser-page'],
     ['chrome-extension://abcdefghijklmnop/popup.html', 'browser-page'],
     ['devtools://devtools/bundled/inspector.html', 'browser-page'],
-    ['view-source:https://example.com/', 'browser-page'],
   ])('detects browser pages: %s', (url, expected) => {
     expect(blockedOriginKind(url)).toBe(expected);
   });

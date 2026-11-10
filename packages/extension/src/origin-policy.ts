@@ -5,8 +5,7 @@ export type BlockedOriginKind = 'webstore' | 'browser-page';
  * 判断 URL 是否属于禁止扩展脚本化的 origin。
  *
  * - `webstore`：Chrome Web Store（新旧 host）——所有扩展脚本都被禁止；
- * - `browser-page`：浏览器内部页面（chrome: / chrome-extension: / devtools:），
- *   `view-source:` 按"注不进去"暂归此类（真机行为待定，见 PR 记录）；
+ * - `browser-page`：浏览器内部页面（chrome: / chrome-extension: / devtools:）；
  * - 其余（含 `about:` 与拿不到 URL）返回 undefined，交给文案兜底。
  */
 export function blockedOriginKind(url: string | undefined): BlockedOriginKind | undefined {
@@ -20,8 +19,7 @@ export function blockedOriginKind(url: string | undefined): BlockedOriginKind | 
   if (
     parsed.protocol === 'chrome:' ||
     parsed.protocol === 'chrome-extension:' ||
-    parsed.protocol === 'devtools:' ||
-    parsed.protocol === 'view-source:'
+    parsed.protocol === 'devtools:'
   ) {
     return 'browser-page';
   }
