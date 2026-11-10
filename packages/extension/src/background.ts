@@ -13,6 +13,7 @@ import type {
   PopupRequest,
   PopupResponse,
 } from './shared/messages.js';
+import { normalizeError } from './error-policy.js';
 import { buildSearchUrl } from './dom/searchUrl.js';
 import { computeCropRect, type ElementRectInfo } from './dom/screenshot.js';
 import { badgeFor, guidanceFor, statusLabel, type ConnState } from './status.js';
@@ -333,35 +334,20 @@ interface WireRequest {
   params?: unknown;
 }
 
-/** chrome.tabs 的"tab 已不存在"错误文案（不同路径措辞略有差异），统一映射为 TAB_CLOSED。 */
-const TAB_GONE_RE = /no tab with id|invalid tab id|no tab with id:|tab was closed/i;
-
-function normalizeError(err: unknown): {
-  code: ProtocolError['error']['code'];
-  message: string;
-  data?: Record<string, unknown>;
-} {
-  const e = err as Error & { code?: string; data?: Record<string, unknown> };
-  const message = e?.message ?? String(err);
-  if (typeof e?.code === 'string') {
-    return {
-      code: e.code as ProtocolError['error']['code'],
-      message,
-      ...(e.data !== undefined ? { data: e.data } : {}),
-    };
-  }
-  if (TAB_GONE_RE.test(message)) {
-    return { code: 'TAB_CLOSED', message };
-  }
-  return { code: 'INTERNAL', message };
-}
-
 async function handleCommand(req: Request): Promise<void> {
   try {
     const result = await dispatchCommand(req);
     sendWire({ id: req.id, result } as unknown as Response);
   } catch (err) {
-    const { code: errCode, message, data } = normalizeError(err);
+    // 失败出口按目标 tab 的 URL 判断是否属于禁止脚本化的 origin；取不到就跳过，不额外抛错。
+    let tabUrl: string | undefined;
+    try {
+      const tabId = req.tabId ?? (await activeTabId());
+      if (tabId !== undefined) tabUrl = (await chrome.tabs.get(tabId)).url;
+    } catch {
+      /* tab 已关闭等：origin 判定跳过 */
+    }
+    const { code: errCode, message, data } = normalizeError(err, tabUrl);
     sendWire({
       id: req.id,
       error: { code: errCode, message, ...(data !== undefined ? { data } : {}) },

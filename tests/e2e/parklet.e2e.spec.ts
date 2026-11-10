@@ -169,6 +169,24 @@ test('goto 只接受 http(s)，其他 scheme 返回 URL_INVALID', async ({ sessi
   expect(res.stderr).toContain('URL_INVALID');
 });
 
+test('chrome://newtab 上 extract / click 返回 ORIGIN_BLOCKED（exit 3）', async ({ session }) => {
+  await session.sw.evaluate(
+    async ({ tabId, url }) => {
+      await chrome.tabs.update(tabId, { url });
+    },
+    { tabId: session.tabId, url: 'chrome://newtab/' },
+  );
+  await session.page.waitForURL('chrome://new-tab-page/', { timeout: 20_000 });
+
+  for (const args of [['extract'], ['click', 'body']]) {
+    const res = await runCli(session.serverUrl, [...args, '--tab', String(session.tabId)]);
+    expect(res.code).toBe(3);
+    expect(res.stderr).toContain('[ORIGIN_BLOCKED]');
+    expect(res.stderr).toContain('plt goto');
+    expect(res.stderr).not.toContain('handle it manually');
+  }
+});
+
 test('当前 tab 连续性：后续命令复用同一目标并感知导航', async ({ session }) => {
   // 首次 goto 设置当前目标 tab
   const url = `${session.web.url}/list`;

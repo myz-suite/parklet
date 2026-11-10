@@ -252,18 +252,19 @@ For selector-based results, `total` is the number of first-level elements (after
 
 ## Error Codes
 
-| code                                                                          | meaning                                     |
-| ----------------------------------------------------------------------------- | ------------------------------------------- |
-| `INVALID_REQUEST` / `INVALID_PARAMS` / `UNKNOWN_METHOD` / `MESSAGE_TOO_LARGE` | envelope/params validation failed           |
-| `EXTENSION_OFFLINE` / `EXTENSION_NO_TAB`                                      | extension not connected / no operable tab   |
-| `TAB_CLOSED`                                                                  | the targeted / current tab no longer exists |
-| `TIMEOUT`                                                                     | command timed out (default 30 s)            |
-| `NO_EFFECT`                                                                   | scroll produced no delta (use `allowNoop`)  |
-| `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS`                                       | locator matched nothing / several elements  |
-| `URL_INVALID` / `HOST_NOT_ALLOWED`                                            | invalid URL / host not in allowlist         |
-| `EVAL_DISABLED`                                                               | eval not enabled                            |
-| `NOT_SERIALIZABLE`                                                            | eval result cannot round-trip through JSON  |
-| `INTERNAL`                                                                    | catch-all error                             |
+| code                                                                          | meaning                                                                              |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `INVALID_REQUEST` / `INVALID_PARAMS` / `UNKNOWN_METHOD` / `MESSAGE_TOO_LARGE` | envelope/params validation failed                                                    |
+| `EXTENSION_OFFLINE` / `EXTENSION_NO_TAB`                                      | extension not connected / no operable tab                                            |
+| `TAB_CLOSED`                                                                  | the targeted / current tab no longer exists                                          |
+| `TIMEOUT`                                                                     | command timed out (default 30 s)                                                     |
+| `NO_EFFECT`                                                                   | no effect: scroll delta 0 (use `allowNoop`) or no history for `back`/`forward`       |
+| `ORIGIN_BLOCKED`                                                              | origin forbids extension scripting (Chrome Web Store / browser pages); not retryable |
+| `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS`                                       | locator matched nothing / several elements                                           |
+| `URL_INVALID` / `HOST_NOT_ALLOWED`                                            | invalid URL / host not in allowlist                                                  |
+| `EVAL_DISABLED`                                                               | eval not enabled                                                                     |
+| `NOT_SERIALIZABLE`                                                            | eval result cannot round-trip through JSON                                           |
+| `INTERNAL`                                                                    | catch-all error                                                                      |
 
 ## Validation (Postel's Law)
 

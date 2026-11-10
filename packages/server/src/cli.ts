@@ -123,6 +123,7 @@ function exitCodeFor(code: ErrorCode | undefined): number {
     case 'UNKNOWN_METHOD':
       return 2;
     case 'TAB_CLOSED':
+    case 'ORIGIN_BLOCKED':
     case 'NO_EFFECT':
     case 'TARGET_NOT_FOUND':
     case 'TARGET_AMBIGUOUS':

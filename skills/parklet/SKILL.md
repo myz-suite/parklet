@@ -65,6 +65,7 @@ Authenticated API: `plt fetch https://api.example.com/me --header "Accept: appli
 - `TARGET_NOT_FOUND` / `TARGET_AMBIGUOUS`: selector/text not found or ambiguous — use `plt extract` first to learn the page, prefer a more specific CSS selector. `fill`/`type` accept a label/container selector and resolve the input.
 - `TAB_NOT_ACTIVE`: deprecated; element screenshots now auto-activate the target tab (`--restore-focus` switches back).
 - `TIMEOUT`: page slow — retry with `--timeout 60000`.
+- `ORIGIN_BLOCKED`: the page forbids extension scripting (Chrome Web Store, `chrome://` pages). Not retryable — switch route with `plt goto <http(s) url>` from a normal page, or handle it manually.
 - `TAB_CLOSED`: the target tab was closed — run `plt goto <url>` or pass `--tab <id>` to pick a new one; later commands auto-fall back to the most recently active tab.
 
 ## 6. Security notes
