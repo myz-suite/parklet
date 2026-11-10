@@ -5,13 +5,13 @@ import { resolve } from 'node:path';
 import { Command } from 'commander';
 import {
   PROTOCOL_VERSION,
-  isErrorCode,
   type ErrorCode,
   type Method,
   type ProtocolError,
   type Response,
 } from '@parklet/protocol';
 import { runCollect } from './collect.js';
+import { exitCodeFor, printError, reportLocalError } from './error-output.js';
 import { fieldsFromOpts } from './fields.js';
 import { startServer } from './index.js';
 import { interpolateValue } from './template.js';
@@ -85,63 +85,41 @@ async function callCommand(
   return httpRes;
 }
 
+/** 连不上 server：交给 reportLocalError 保留 EXTENSION_OFFLINE 与 exit 4。 */
+function serverUnreachable(base: string, err: unknown): Error & { code: 'EXTENSION_OFFLINE' } {
+  return Object.assign(new Error(`cannot reach server at ${base}: ${(err as Error).message}`), {
+    code: 'EXTENSION_OFFLINE' as const,
+  });
+}
+
 async function fetchLedger(
   opts: GlobalOpts,
   tail: number,
-): Promise<{ entries: Array<Record<string, unknown>> } | { error: string }> {
+): Promise<{ entries: Array<Record<string, unknown>> }> {
   const base = opts.server.replace(/\/+$/, '');
-  try {
-    const res = await fetch(`${base}/api/ledger?tail=${tail}`, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    return (await res.json()) as { entries: Array<Record<string, unknown>> };
-  } catch (err) {
-    return { error: `cannot reach server at ${base}: ${(err as Error).message}` };
-  }
+  const res = await fetch(`${base}/api/ledger?tail=${tail}`, {
+    signal: AbortSignal.timeout(10_000),
+  }).catch((err: unknown) => {
+    throw serverUnreachable(base, err);
+  });
+  return (await res.json()) as { entries: Array<Record<string, unknown>> };
 }
 
 async function fetchEvents(
   opts: GlobalOpts,
-): Promise<{ events: CachedEvent[]; unreadCount: number } | { error: string }> {
+): Promise<{ events: CachedEvent[]; unreadCount: number }> {
   const base = opts.server.replace(/\/+$/, '');
-  try {
-    const res = await fetch(`${base}/api/events`, { signal: AbortSignal.timeout(10_000) });
-    return (await res.json()) as { events: CachedEvent[]; unreadCount: number };
-  } catch (err) {
-    return { error: `cannot reach server at ${base}: ${(err as Error).message}` };
-  }
+  const res = await fetch(`${base}/api/events`, {
+    signal: AbortSignal.timeout(10_000),
+  }).catch((err: unknown) => {
+    throw serverUnreachable(base, err);
+  });
+  return (await res.json()) as { events: CachedEvent[]; unreadCount: number };
 }
 
 // ---------------------------------------------------------------------------
 // 输出与退出码
 // ---------------------------------------------------------------------------
-
-function exitCodeFor(code: ErrorCode | undefined): number {
-  switch (code) {
-    case 'INVALID_REQUEST':
-    case 'INVALID_PARAMS':
-    case 'UNKNOWN_METHOD':
-      return 2;
-    case 'TAB_CLOSED':
-    case 'ORIGIN_BLOCKED':
-    case 'NO_EFFECT':
-    case 'TARGET_NOT_FOUND':
-    case 'TARGET_AMBIGUOUS':
-    case 'TAB_NOT_ACTIVE':
-    case 'URL_INVALID':
-    case 'HOST_NOT_ALLOWED':
-    case 'EVAL_DISABLED':
-    case 'NOT_SERIALIZABLE':
-      return 3;
-    case 'EXTENSION_OFFLINE':
-    case 'EXTENSION_NO_TAB':
-      return 4;
-    case 'TIMEOUT':
-      return 6;
-    default:
-      return 1;
-  }
-}
 
 function formatContext(result: Response['result']): string {
   const { context } = result;
@@ -521,28 +499,6 @@ function printResult(method: string, result: Response['result'], opts: GlobalOpt
     default:
       if (data !== undefined) console.log(JSON.stringify(data));
   }
-}
-
-function printError(error: ProtocolError['error'], opts: GlobalOpts): void {
-  const msg = `✖ [${error.code}] ${error.message}`;
-  if (opts.json) console.log(JSON.stringify({ error }));
-  else console.error(msg);
-}
-
-function reportLocalError(
-  err: unknown,
-  opts: Record<string, unknown>,
-  fallback: ErrorCode,
-  exitCode: number,
-): void {
-  const e = err as Error & { code?: string };
-  const code: ErrorCode = e.code !== undefined && isErrorCode(e.code) ? e.code : fallback;
-  if (opts.json === true) {
-    console.log(JSON.stringify({ error: { code, message: e.message } }));
-  } else {
-    console.error(`✖ [${code}] ${e.message}`);
-  }
-  process.exitCode = exitCode;
 }
 
 // ---------------------------------------------------------------------------
@@ -1203,19 +1159,23 @@ Run \`plt <command> --help\` for command-specific options.`,
       const g = globalOptsFrom(this.optsWithGlobals());
       void opts;
       const tail = Number(this.optsWithGlobals().tail) || 100;
-      const res = await fetchLedger(g, tail);
-      if ('error' in res) {
-        console.error(`✖ ${String(res.error)}`);
-        process.exitCode = 4;
+      let res: { entries: Array<Record<string, unknown>> };
+      try {
+        res = await fetchLedger(g, tail);
+      } catch (err) {
+        reportLocalError(err, { json: g.json }, 'EXTENSION_OFFLINE', 4);
         return;
       }
       for (const e of res.entries) console.log(JSON.stringify(e));
       if (this.optsWithGlobals().follow) {
         const timer = setInterval(async () => {
-          const next = await fetchLedger(g, 0);
-          if (!('error' in next)) {
-            for (const e of next.entries) console.log(JSON.stringify(e));
+          let next: { entries: Array<Record<string, unknown>> };
+          try {
+            next = await fetchLedger(g, 0);
+          } catch {
+            return; // server 暂时不可达：继续跟随，等下一轮
           }
+          for (const e of next.entries) console.log(JSON.stringify(e));
         }, 1000);
         timer.unref();
       }
@@ -1229,10 +1189,11 @@ Run \`plt <command> --help\` for command-specific options.`,
     .action(async function (this: Command) {
       const opts = this.optsWithGlobals() as Record<string, unknown>;
       const g = globalOptsFrom(opts);
-      const res = await fetchEvents(g);
-      if ('error' in res) {
-        console.error(`✖ ${String(res.error)}`);
-        process.exitCode = 4;
+      let res: { events: CachedEvent[]; unreadCount: number };
+      try {
+        res = await fetchEvents(g);
+      } catch (err) {
+        reportLocalError(err, { json: g.json }, 'EXTENSION_OFFLINE', 4);
         return;
       }
       const tail = Number(opts.tail) || 100;

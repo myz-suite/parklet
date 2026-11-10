@@ -66,6 +66,7 @@ Authenticated API: `plt fetch https://api.example.com/me --header "Accept: appli
 - `TAB_NOT_ACTIVE`: deprecated; element screenshots now auto-activate the target tab (`--restore-focus` switches back).
 - `TIMEOUT`: page slow — retry with `--timeout 60000`.
 - `ORIGIN_BLOCKED`: the page forbids extension scripting (Chrome Web Store, `chrome://` pages). Not retryable — switch route with `plt goto <http(s) url>` from a normal page, or handle it manually.
+- `PARKLET_STATE_DIR`: server state (pair token, ledger) defaults to `~/.parklet`; set this env var to move it, e.g. when the default directory is not writable.
 - `TAB_CLOSED`: the target tab was closed — run `plt goto <url>` or pass `--tab <id>` to pick a new one; later commands auto-fall back to the most recently active tab.
 
 ## 6. Security notes

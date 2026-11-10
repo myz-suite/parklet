@@ -110,9 +110,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: HttpDeps)
       return;
     }
 
-    respondJson(res, 404, { error: 'not found' });
+    respondJson(res, 404, { error: { code: 'INVALID_REQUEST', message: 'not found' } });
   } catch (err) {
-    respondJson(res, 500, { error: `internal: ${String(err)}` });
+    respondJson(res, 500, { error: { code: 'INTERNAL', message: String(err) } });
   }
 }
 
